@@ -1,0 +1,8 @@
+.vs/
+*.user
+
+# Build output: only the Release DLL is kept
+/TempleRush/
+/x64/Debug/
+/x64/Release/*
+!/x64/Release/TempleRush.dll
