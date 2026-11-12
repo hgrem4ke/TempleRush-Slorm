@@ -33,16 +33,23 @@ Click it to open the TempleRush page. It lists the mod's upgrades in the style o
 - each level is worth 0.1 room, and only whole rooms count: one room is removed every 10 levels, up to
   5 rooms at level 50 (the maximum);
 - a floor always keeps at least 3 rooms;
-- a level costs 500 x its number, in Pure Slorm.
+- a level costs 50 x its number, in Pure Slorm.
 
 | Level reached | Rooms removed | Cumulative cost (Pure Slorm) |
 |--------------:|--------------:|-----------------------------:|
-| 1 | 0 | 500 |
-| 10 | 1 | 27,500 |
-| 20 | 2 | 105,000 |
-| 30 | 3 | 232,500 |
-| 40 | 4 | 410,000 |
-| 50 | 5 | 637,500 |
+| 1 | 0 | 50 |
+| 10 | 1 | 2,750 |
+| 20 | 2 | 10,500 |
+| 30 | 3 | 23,250 |
+| 40 | 4 | 41,000 |
+| 50 | 5 | 63,750 |
+
+**Refunds.** The same page has two more buttons: **Refund** gives back the last level (what it cost) and
+**Refund all** (click twice to confirm) removes every level and gives back all the Pure Slorm you spent.
+Going below a multiple of 10 levels removes that room again, from the next floor on.
+
+**On entering a floor**, a small box under the timer tells you what the upgrade did, for 8 seconds:
+"4 rooms instead of 6", "... (minimum reached)" or "no room removed, this floor is already at the minimum".
 
 The **EN | FR** switch at the top left of the page changes its language (it is remembered; the first
 time it follows the language of Windows). Esc, the X button or a click outside the page closes it.
@@ -102,6 +109,11 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 **Release / x64**. The Aurie and YYToolkit v5.0.0c headers are in `include/`.
 
 ## Changelog
+
+### 1.2.1
+- Refund buttons on the upgrade page: **Refund** (last level) and **Refund all** (asks for a second click).
+- On entering a floor, a box tells how many rooms the floor has and how many it would have had without the upgrade.
+- Upgrade price lowered to 50 x level (it was 500 x level in 1.2.0).
 
 ### 1.2.0
 - New Juicy Slorm upgrade "Temple Floor Room Count": an **M** diamond in the "Personnage" window opens a page

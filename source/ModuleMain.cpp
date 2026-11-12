@@ -34,6 +34,7 @@ using namespace YYTK;
 #define FR_E_ACUTE    "\xC3\xA9"
 #define FR_E_ACUTE_UP "\xC3\x89"
 #define FR_E_GRAVE    "\xC3\xA8"
+#define FR_A_GRAVE    "\xC3\xA0"
 
 // ============================================================
 // Constants
@@ -207,6 +208,7 @@ static void WriteTempleData(const std::vector<double>& Values)
 
 static void RunRoomUi();
 static void DrawPageIfOpen(int Tag);
+static void DrawRoomNotice();
 
 static void OnEndStep()
 {
@@ -376,6 +378,7 @@ static RValue& HudDrawHook(
 {
     RValue& ret = g_OriginalHud(Self, Other, Result, ArgumentCount, Arguments);
     DrawTimer();
+    DrawRoomNotice();
     DrawPageIfOpen(2);
     return ret;
 }
@@ -480,6 +483,15 @@ static constexpr double kRoomsPerLevel = 0.1;
 static constexpr size_t kMinRoomsKept = 3;
 
 static int g_RoomUpgradeLevel = 0;
+static double g_RoomSpent = 0.0;     // Pure Slorm spent on the levels of the current slot
+
+// Notice shown when a floor starts: how many rooms it has, and how many it would have had.
+static size_t g_NoticeKept = 0;
+static size_t g_NoticeOriginal = 0;
+static int g_NoticeKind = 0;            // 0: rooms removed, 1: none (floor already at the minimum), 2: removed down to the minimum
+static double g_NoticeUntil = 0.0;
+static bool g_NoticePending = false;    // the countdown of the notice starts when it is first drawn
+static constexpr double kNoticeSeconds = 8.0;
 static void SyncSaveSlot();   // follows the save slot, defined with the save file code
 
 // Whole rooms removed by the current upgrade level.
@@ -505,7 +517,15 @@ static void DropRoomsBeforeLast(RValue& Rooms)
 
     std::vector<RValue> rooms = Rooms.ToVector();
     const size_t count = rooms.size();
-    if (count <= kMinRoomsKept || !rooms[count - 1].IsArray())
+    if (count <= kMinRoomsKept)
+    {
+        // The upgrade is active but this floor is already at the minimum: tell the player.
+        g_NoticeKind = 1;
+        g_NoticeOriginal = g_NoticeKept = count;
+        g_NoticePending = true;
+        return;
+    }
+    if (!rooms[count - 1].IsArray())
         return;
 
     const size_t removeCount = (count - kMinRoomsKept < wanted) ? count - kMinRoomsKept : wanted;
@@ -523,6 +543,11 @@ static void DropRoomsBeforeLast(RValue& Rooms)
     g_Yytk->CallBuiltin("array_set", { last, RValue(1.0), RValue(ReadNumber(spot[1])) });
     g_Yytk->CallBuiltin("array_set", { last, RValue(5.0), RValue(static_cast<double>(count - removeCount)) });
     g_Yytk->CallBuiltin("array_delete", { Rooms, RValue(static_cast<double>(firstRemoved)), RValue(static_cast<double>(removeCount)) });
+
+    g_NoticeOriginal = count;
+    g_NoticeKept = count - removeCount;
+    g_NoticeKind = (removeCount < wanted) ? 2 : 0;
+    g_NoticePending = true;
 }
 
 static RValue& GenBspHook(
@@ -546,14 +571,16 @@ static RValue& GenBspHook(
 
 static constexpr const char* kRoomSaveFile = "TempleRush_rooms.txt";
 static constexpr const char* kCurrencyVar = "pure_slorm";
-static constexpr double kPriceBase = 500.0;           // price of the next level = kPriceBase * (level + 1)
+static constexpr double kPriceBase = 50.0;            // price of the next level = kPriceBase * (level + 1)
 
 static bool g_French = false;
 
 // The level is stored per save slot (the game's global.save_file), in TempleRush_rooms.txt:
 //   language=0|1          (0 = English, 1 = French; absent: the language of Windows)
 //   level_<slot>=<level>
+//   spent_<slot>=<Pure Slorm spent on those levels>   (what a refund gives back)
 static std::map<int, int> g_SlotLevels;
+static std::map<int, double> g_SlotSpent;
 static int g_CurrentSlot = -1;
 
 static int ReadSaveSlot()
@@ -579,18 +606,28 @@ static void LoadRoomLevel()
             g_French = (value == 1);
         else if (key.rfind("level_", 0) == 0)
             g_SlotLevels[std::atoi(key.c_str() + 6)] = value < 0 ? 0 : (value > kRoomUpgradeMaxLevel ? kRoomUpgradeMaxLevel : value);
+        else if (key.rfind("spent_", 0) == 0)
+            g_SlotSpent[std::atoi(key.c_str() + 6)] = std::atof(line.c_str() + eq + 1);
     }
 }
 
 static void SaveRoomLevel()
 {
     if (g_CurrentSlot >= 0)
+    {
         g_SlotLevels[g_CurrentSlot] = g_RoomUpgradeLevel;
+        g_SlotSpent[g_CurrentSlot] = g_RoomSpent;
+    }
 
     std::ofstream file(kRoomSaveFile, std::ios::trunc);
     file << "language=" << (g_French ? 1 : 0) << std::endl;
     for (const auto& kv : g_SlotLevels)
+    {
         file << "level_" << kv.first << "=" << kv.second << std::endl;
+        const auto spent = g_SlotSpent.find(kv.first);
+        if (spent != g_SlotSpent.end())
+            file << "spent_" << kv.first << "=" << static_cast<long long>(spent->second) << std::endl;
+    }
 }
 
 // Follows the save the player is on: puts the level of the current slot in g_RoomUpgradeLevel.
@@ -601,11 +638,19 @@ static void SyncSaveSlot()
         return;
 
     if (g_CurrentSlot >= 0)
+    {
         g_SlotLevels[g_CurrentSlot] = g_RoomUpgradeLevel;
+        g_SlotSpent[g_CurrentSlot] = g_RoomSpent;
+    }
 
     g_CurrentSlot = slot;
     const auto it = g_SlotLevels.find(slot);
     g_RoomUpgradeLevel = (it != g_SlotLevels.end()) ? it->second : 0;
+
+    // A level saved without its cost (older file): assume it was bought at the normal price.
+    const auto spent = g_SlotSpent.find(slot);
+    g_RoomSpent = (spent != g_SlotSpent.end()) ? spent->second
+                                               : kPriceBase * g_RoomUpgradeLevel * (g_RoomUpgradeLevel + 1) / 2.0;
 }
 
 static double RoomPrice()
@@ -616,6 +661,51 @@ static double RoomPrice()
 static const char* Tr(const char* English, const char* French)
 {
     return g_French ? French : English;
+}
+
+// "4 rooms instead of 6", under the timer, for a few seconds when a floor starts.
+static void DrawRoomNotice()
+{
+    if (g_NoticeOriginal == 0)
+        return;
+
+    if (g_NoticePending)
+    {
+        g_NoticePending = false;
+        g_NoticeUntil = NowSeconds() + kNoticeSeconds;
+    }
+    if (NowSeconds() >= g_NoticeUntil)
+        return;
+
+    char text[200];
+    if (g_NoticeKind == 1)
+        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: no room removed, this floor is already at the minimum (%zu rooms)",
+            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : aucune pi" FR_E_GRAVE "ce retir" FR_E_ACUTE "e, l'" FR_E_ACUTE "tage est d" FR_E_ACUTE "j" FR_A_GRAVE " au minimum (%zu pi" FR_E_GRAVE "ces)"),
+            g_NoticeKept);
+    else if (g_NoticeKind == 2)
+        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: %zu rooms instead of %zu (minimum reached)",
+            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : %zu pi" FR_E_GRAVE "ces au lieu de %zu (minimum atteint)"),
+            g_NoticeKept, g_NoticeOriginal);
+    else
+        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: %zu rooms instead of %zu",
+            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : %zu pi" FR_E_GRAVE "ces au lieu de %zu"), g_NoticeKept, g_NoticeOriginal);
+
+    const double guiWidth = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_width", {}));
+    const double textWidth = ReadNumber(g_Yytk->CallBuiltin("string_width", { text }));
+    const double width = (textWidth + 40.0 > kPanelWidth) ? textWidth + 40.0 : kPanelWidth;
+    const double left = guiWidth / 2.0 - width / 2.0;
+    const double top = kPanelTop + kPanelHeight + 8.0;
+    const double bottom = top + kPanelHeight;
+
+    GmAlpha(0.6);
+    GmColor(0, 0, 0);
+    GmRect(left, top, left + width, bottom);
+    GmAlpha(1.0);
+    GmColor(120, 255, 200);
+    GmAlign(1, 1);
+    GmText(guiWidth / 2.0, (top + bottom) / 2.0, text, 1.0);
+    GmAlign(0, 0);
+    GmColor(255, 255, 255);
 }
 
 // Buys one level if there are enough Pure Slorm. Returns true if it was bought.
@@ -632,6 +722,54 @@ static bool BuyRoomLevel()
 
     g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold - price) });
     g_RoomUpgradeLevel++;
+    g_RoomSpent += price;
+    SaveRoomLevel();
+    return true;
+}
+
+// Refund of the last level: what it cost, never more than what was spent in total.
+static double RoomRefundOneValue()
+{
+    SyncSaveSlot();
+    if (g_RoomUpgradeLevel <= 0)
+        return 0.0;
+    const double cost = kPriceBase * g_RoomUpgradeLevel;
+    return cost < g_RoomSpent ? cost : g_RoomSpent;
+}
+
+static bool RoomRefundOne()
+{
+    const double value = RoomRefundOneValue();
+    if (g_RoomUpgradeLevel <= 0)
+        return false;
+
+    const double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
+    g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold + value) });
+    g_RoomUpgradeLevel--;
+    g_RoomSpent -= value;
+    if (g_RoomSpent < 0.0 || g_RoomUpgradeLevel == 0)
+        g_RoomSpent = 0.0;
+    SaveRoomLevel();
+    return true;
+}
+
+// Refund of everything: all the levels go back to 0 and all the Slorm spent come back.
+static double RoomRefundAllValue()
+{
+    SyncSaveSlot();
+    return g_RoomUpgradeLevel > 0 ? g_RoomSpent : 0.0;
+}
+
+static bool RoomRefundAll()
+{
+    SyncSaveSlot();
+    if (g_RoomUpgradeLevel <= 0)
+        return false;
+
+    const double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
+    g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold + g_RoomSpent) });
+    g_RoomUpgradeLevel = 0;
+    g_RoomSpent = 0.0;
     SaveRoomLevel();
     return true;
 }
@@ -723,6 +861,7 @@ static bool       g_PageWasOpen = false;
 static bool       g_PageOpen = false;
 static ULONGLONG  g_PageOpenedAt = 0;
 static bool       g_EscWasDown = false;
+static ULONGLONG  g_RefundAllArmedUntil = 0;   // a second click before this time confirms "Refund all"
 static MouseState g_LastMouse;
 static double     g_LastW = 0.0, g_LastH = 0.0;
 
@@ -813,6 +952,10 @@ struct UpgradeDef
     int    (*MaxLevel)();
     double (*Price)();                              // price of the next level
     bool   (*Buy)();                                // takes the price and adds a level
+    double (*RefundOneValue)();                     // Slorm given back for the last level
+    bool   (*RefundOne)();                          // gives them back and removes the level
+    double (*RefundAllValue)();                     // Slorm given back for all the levels
+    bool   (*RefundAll)();                          // gives them back and removes all the levels
     void   (*Value)(char* Out, size_t Size);        // grey text after the name, e.g. "(-4.5)"
 };
 
@@ -828,7 +971,8 @@ static const UpgradeDef kUpgrades[] = {
       "-0,1 Pi" FR_E_GRAVE "ce par " FR_E_ACUTE "tage du Temple",
       "Reduces the total number of rooms to reach end of floor in The Slorm Temple.",
       "R" FR_E_ACUTE "duit le nombre total de pi" FR_E_GRAVE "ces pour atteindre la fin d'un " FR_E_ACUTE "tage du Temple du Slorm.",
-      RoomsLevel, RoomsMaxLevel, RoomPrice, BuyRoomLevel, RoomsValue },
+      RoomsLevel, RoomsMaxLevel, RoomPrice, BuyRoomLevel,
+      RoomRefundOneValue, RoomRefundOne, RoomRefundAllValue, RoomRefundAll, RoomsValue },
 };
 static constexpr int kUpgradeCount = static_cast<int>(sizeof(kUpgrades) / sizeof(kUpgrades[0]));
 static int g_SelectedUpgrade = 0;
@@ -844,6 +988,8 @@ struct PageLayout
     double tipL, tipT, tipR, tipB;
     double panelL, panelT, panelR, panelB;
     double buyL, buyT, buyR, buyB;
+    double refL, refT, refR, refB;
+    double allL, allT, allR, allB;
     double closeL, closeT, closeR, closeB;
     double langL, langT, langR, langB;
 };
@@ -889,8 +1035,12 @@ static PageLayout GetPageLayout(double W, double H)
     l.panelL = l.headerL; l.panelR = l.headerR;
     l.panelT = y; l.panelB = y + 120.0 * u;
 
-    l.buyL = l.cx - 150.0 * u; l.buyR = l.cx + 150.0 * u;
-    l.buyT = l.panelT + 54.0 * u; l.buyB = l.buyT + 56.0 * u;
+    // Three buttons side by side: Buy, Refund (last level), Refund all.
+    l.buyT = l.refT = l.allT = l.panelT + 54.0 * u;
+    l.buyB = l.refB = l.allB = l.buyT + 56.0 * u;
+    l.buyL = l.cx - 340.0 * u; l.buyR = l.cx - 120.0 * u;
+    l.refL = l.cx - 110.0 * u; l.refR = l.cx + 110.0 * u;
+    l.allL = l.cx + 120.0 * u; l.allR = l.cx + 340.0 * u;
     return l;
 }
 
@@ -964,21 +1114,35 @@ static void DrawSlormDrop(double X, double Y, double Radius)
     g_Yytk->CallBuiltin("draw_circle", { RValue(X), RValue(Y), RValue(Radius), RValue(0.0) });
 }
 
-static void DrawBuyButton(const MouseState& M, const PageLayout& L, bool Enabled, bool Maxed)
+static void DrawActionButton(const MouseState& M, double U, double L, double T, double R, double B, const char* Label, bool Enabled)
 {
-    const bool hover = Enabled && Inside(M, L.buyL, L.buyT, L.buyR, L.buyB);
-    const double u = L.u;
-    FillRect(L.buyL, L.buyT, L.buyR, L.buyB, hover ? 40 : 24, hover ? 32 : 20, hover ? 30 : 20);
-    FrameRect(L.buyL, L.buyT, L.buyR, L.buyB, 3.0 * u, Enabled ? 110 : 60, Enabled ? 90 : 55, Enabled ? 80 : 50);
+    const bool hover = Enabled && Inside(M, L, T, R, B);
+    FillRect(L, T, R, B, hover ? 40 : 24, hover ? 32 : 20, hover ? 30 : 20);
+    FrameRect(L, T, R, B, 3.0 * U, Enabled ? 110 : 60, Enabled ? 90 : 55, Enabled ? 80 : 50);
     // The red diamonds at both ends, like the game's button.
-    const double d = 12.0 * u, my = (L.buyT + L.buyB) / 2.0;
-    FillRect(L.buyL + 14.0 * u - d / 2.0, my - d / 2.0, L.buyL + 14.0 * u + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
-    FillRect(L.buyR - 14.0 * u - d / 2.0, my - d / 2.0, L.buyR - 14.0 * u + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
+    const double d = 12.0 * U, my = (T + B) / 2.0;
+    FillRect(L + 14.0 * U - d / 2.0, my - d / 2.0, L + 14.0 * U + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
+    FillRect(R - 14.0 * U - d / 2.0, my - d / 2.0, R - 14.0 * U + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
 
     GmAlign(1, 1);
     GmColor(Enabled ? 255 : 130, Enabled ? 255 : 130, Enabled ? 255 : 130);
-    PageText(L.cx, my, Maxed ? "MAX" : Tr("Buy", "Acheter"), (u * 1080.0 / 900.0) * 1.15);
+    PageText((L + R) / 2.0, my, Label, (U * 1080.0 / 900.0) * 1.0);
     GmAlign(0, 0);
+}
+
+// An amount of Slorm in a dark box above a button, with the game's drop: "Prefix" is "" or "+".
+static void DrawAmountBox(double U, double L, double R, double Top, const char* Prefix, double Amount, int Cr, int Cg, int Cb)
+{
+    FillRect(L, Top, R, Top + 36.0 * U, 20, 8, 8);
+    char text[48];
+    std::snprintf(text, sizeof(text), "%s%.0f", Prefix, Amount);
+    const double ts = (U * 1080.0 / 900.0);
+    const double w = TextWidth(text, ts * 1.0);
+    const double x = (L + R) / 2.0 - (w + 26.0 * U) / 2.0;
+    GmAlign(0, 1);
+    GmColor(Cr, Cg, Cb);
+    PageText(x, Top + 18.0 * U, text, ts * 1.0);
+    DrawSlormDrop(x + w + 16.0 * U, Top + 18.0 * U, 7.0 * U);
 }
 
 static void DrawRoomPage(const MouseState& M, double W, double H)
@@ -1079,29 +1243,34 @@ static void DrawRoomPage(const MouseState& M, double W, double H)
     g_Yytk->CallBuiltin("draw_text_ext_transformed", { RValue(L.tipL + 16.0 * u), RValue(L.tipT + 14.0 * u),
         Tr(sel.TipEn, sel.TipFr), RValue(-1.0), RValue((L.tipR - L.tipL - 32.0 * u) / (ts * 0.95 * kPageTextScale)), RValue(ts * 0.95 * kPageTextScale), RValue(ts * 0.95 * kPageTextScale), RValue(0.0) });
 
-    // Price and buy button.
+    // Price, refunds and their buttons.
     FillRect(L.panelL, L.panelT, L.panelR, L.panelB, 62, 22, 16);
     FrameRect(L.panelL, L.panelT, L.panelR, L.panelB, 2.0 * u, 112, 42, 26);
     const bool maxed = sel.Level() >= sel.MaxLevel();
     const bool canBuy = CanBuyUpgrade(sel, gold);
-    FillRect(L.pillL, L.panelT + 10.0 * u, L.pillR, L.panelT + 46.0 * u, 20, 8, 8);
+    const double refundOne = sel.RefundOneValue();
+    const double refundAll = sel.RefundAllValue();
+    const double boxTop = L.panelT + 10.0 * u;
+
     if (maxed)
     {
+        FillRect(L.buyL, boxTop, L.buyR, boxTop + 36.0 * u, 20, 8, 8);
         GmAlign(1, 1);
         GmColor(200, 200, 200);
-        PageText(L.cx, L.panelT + 28.0 * u, "-", ts * 1.0);
+        PageText((L.buyL + L.buyR) / 2.0, boxTop + 18.0 * u, "-", ts * 1.0);
     }
     else
     {
-        std::snprintf(text, sizeof(text), "%.0f", sel.Price());
-        const double pw = TextWidth(text, ts * 1.0);
-        const double px = L.cx - (pw + 26.0 * u) / 2.0;
-        GmAlign(0, 1);
-        if (gold >= sel.Price()) GmColor(255, 255, 255); else GmColor(230, 80, 60);
-        PageText(px, L.panelT + 28.0 * u, text, ts * 1.0);
-        DrawSlormDrop(px + pw + 16.0 * u, L.panelT + 28.0 * u, 7.0 * u);
+        const bool enough = gold >= sel.Price();
+        DrawAmountBox(u, L.buyL, L.buyR, boxTop, "", sel.Price(), enough ? 255 : 230, enough ? 255 : 80, enough ? 255 : 60);
     }
-    DrawBuyButton(M, L, canBuy, maxed);
+    DrawAmountBox(u, L.refL, L.refR, boxTop, "+", refundOne, 130, 220, 130);
+    DrawAmountBox(u, L.allL, L.allR, boxTop, "+", refundAll, 130, 220, 130);
+
+    DrawActionButton(M, u, L.buyL, L.buyT, L.buyR, L.buyB, maxed ? "MAX" : Tr("Buy", "Acheter"), canBuy);
+    DrawActionButton(M, u, L.refL, L.refT, L.refR, L.refB, Tr("Refund", "Rembourser"), refundOne > 0.0 || sel.Level() > 0);
+    const bool armed = GetTickCount64() < g_RefundAllArmedUntil;
+    DrawActionButton(M, u, L.allL, L.allT, L.allR, L.allB, armed ? Tr("Confirm?", "Confirmer ?") : Tr("Refund all", "Tout rembourser"), sel.Level() > 0);
 
     GmColor(255, 255, 255);
     GmAlpha(1.0);
@@ -1262,14 +1431,41 @@ static void RunRoomUi()
             g_SelectedUpgrade = i;
     }
 
+    const UpgradeDef& sel = kUpgrades[g_SelectedUpgrade];
+    const ULONGLONG now = GetTickCount64();
+
     if (Inside(M, L.buyL, L.buyT, L.buyR, L.buyB))
     {
         double gold = 0.0;
-        const UpgradeDef& sel = kUpgrades[g_SelectedUpgrade];
         if (CanBuyUpgrade(sel, gold) && sel.Buy())
-        {
             g_ExtraRedraws = 40;    // refresh the Slorm shown by the game's own window right away
+        g_RefundAllArmedUntil = 0;
+    }
+    else if (Inside(M, L.refL, L.refT, L.refR, L.refB))
+    {
+        if (sel.Level() > 0 && sel.RefundOne())
+            g_ExtraRedraws = 40;
+        g_RefundAllArmedUntil = 0;
+    }
+    else if (Inside(M, L.allL, L.allT, L.allR, L.allB))
+    {
+        if (sel.Level() > 0)
+        {
+            if (now < g_RefundAllArmedUntil)
+            {
+                if (sel.RefundAll())
+                    g_ExtraRedraws = 40;
+                g_RefundAllArmedUntil = 0;
+            }
+            else
+            {
+                g_RefundAllArmedUntil = now + 3000;     // ask for a second click
+            }
         }
+    }
+    else
+    {
+        g_RefundAllArmedUntil = 0;
     }
 }
 

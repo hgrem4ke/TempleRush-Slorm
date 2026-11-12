@@ -33,16 +33,23 @@ liste du jeu (d'autres pourront être ajoutées) ; clique sur une ligne pour la 
 - chaque niveau vaut 0,1 pièce, et seules les pièces entières comptent : une pièce est retirée tous les
   10 niveaux, jusqu'à 5 pièces au niveau 50 (le maximum) ;
 - un étage garde toujours au moins 3 pièces ;
-- un niveau coûte 500 x son numéro, en Slorm purs.
+- un niveau coûte 50 x son numéro, en Slorm purs.
 
 | Niveau atteint | Pièces retirées | Coût cumulé (Slorm purs) |
 |---------------:|----------------:|-------------------------:|
-| 1 | 0 | 500 |
-| 10 | 1 | 27 500 |
-| 20 | 2 | 105 000 |
-| 30 | 3 | 232 500 |
-| 40 | 4 | 410 000 |
-| 50 | 5 | 637 500 |
+| 1 | 0 | 50 |
+| 10 | 1 | 2 750 |
+| 20 | 2 | 10 500 |
+| 30 | 3 | 23 250 |
+| 40 | 4 | 41 000 |
+| 50 | 5 | 63 750 |
+
+**Remboursement.** La même page a deux boutons de plus : **Rembourser** rend le dernier niveau (ce qu'il a coûté) et
+**Tout rembourser** (deux clics pour confirmer) retire tous les niveaux et rend tous les Slorm purs dépensés.
+Repasser sous un multiple de 10 niveaux rend la pièce correspondante, à partir de l'étage suivant.
+
+**En entrant dans un étage**, un petit cadre sous le chronomètre indique pendant 8 secondes ce que l'amélioration a fait :
+« 4 pièces au lieu de 6 », « … (minimum atteint) » ou « aucune pièce retirée, l'étage est déjà au minimum ».
 
 Le sélecteur **EN | FR** en haut à gauche de la page change sa langue (il est mémorisé ; la première fois, il
 suit la langue de Windows). Échap, le bouton X ou un clic en dehors de la page la ferme.
@@ -104,6 +111,11 @@ Visual Studio 2022 ou plus récent, avec « Développement Desktop en C++ ». Ou
 et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont dans `include/`.
 
 ## Historique des versions
+
+### 1.2.1
+- Boutons de remboursement sur la page de l'amélioration : **Rembourser** (dernier niveau) et **Tout rembourser** (demande un second clic).
+- En entrant dans un étage, un cadre indique combien de pièces il a et combien il en aurait eu sans l'amélioration.
+- Prix de l'amélioration abaissé à 50 x niveau (il était de 500 x niveau en 1.2.0).
 
 ### 1.2.0
 - Nouvelle amélioration du Slorm Juteux « Pièces par étage du Temple » : un losange **M** dans la fenêtre « Personnage »
