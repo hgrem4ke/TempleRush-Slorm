@@ -59,15 +59,21 @@ save file). Copy that file along with your save if you move to another PC.
 
 ## Timer on screen
 
-During a Temple floor, a small panel at the top of the screen shows the bonus you can still get and
-the time left for it, with a bar that empties. The countdown starts when the first monsters of the
-floor appear: until then the panel shows the full time, frozen.
+During a Temple floor, a small panel at the top right of the screen (under the game's "Find the Shrine"
+line) shows the bonus you can still get and the time left for it, with a bar that empties. The countdown
+starts when the first monsters of the floor appear: until then the panel shows the full time, frozen.
+
+The monsters appear room by room, so the countdown keeps running between rooms. In the **last room** (the
+one with the altar), as soon as the last monster is dead the countdown **freezes**: the panel turns green
+with "OK" and the bonus you reached is kept, so walking to the altar and picking up the Slorm costs you
+nothing. If monsters show up again, it goes on.
 
 | Panel | Meaning |
 |-------|---------|
 | `+5  0:23` (gold) | 23 seconds left to clear the floor for +5 floors |
 | `+2  1:12` (blue) | 1 min 12 s left to clear the floor for +2 floors |
 | `+0  0:00` (grey) | too late, no bonus (disappears after 5 seconds) |
+| `+4  0:05  OK` (green) | last room cleared: the countdown is frozen and the bonus is kept |
 | `+1` (green) | after the clear: the bonus you got (shown for 6 seconds) |
 
 It only shows in the Slorm Temple, not in the Battlefield or the Great Forge.
@@ -109,6 +115,10 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 **Release / x64**. The Aurie and YYToolkit v5.0.0c headers are in `include/`.
 
 ## Changelog
+
+### 1.2.2
+- The timer moved under the game's "Find the Shrine" line (top right) and scales with the resolution.
+- The countdown freezes in the last room (where the altar is) once the last monster is dead, and the bonus is kept.
 
 ### 1.2.1
 - Refund buttons on the upgrade page: **Refund** (last level) and **Refund all** (asks for a second click).

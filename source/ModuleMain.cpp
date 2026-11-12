@@ -80,9 +80,14 @@ static constexpr double kMaxFrameSeconds = 0.25;
 
 // Timer on screen: panel size and position (GUI pixels), time the result stays after a clear,
 // and how long the "no bonus" state stays once the last threshold has passed.
-static constexpr double kPanelWidth = 150.0;
-static constexpr double kPanelHeight = 34.0;
-static constexpr double kPanelTop = 64.0;
+// Fractions of the screen: under the game's "Find the Shrine" line, below the minimap (top right).
+static constexpr double kPanelLeftFrac = 0.793;
+static constexpr double kPanelWidthFrac = 0.199;
+static constexpr double kPanelTopFrac = 0.325;
+static constexpr double kPanelHeightFrac = 0.062;
+
+// The countdown freezes once no monster is left for this long (the last room is cleared): the bonus is kept.
+static constexpr double kFreezeDelaySeconds = 0.5;
 static constexpr double kResultSeconds = 6.0;
 static constexpr double kExpiredSeconds = 5.0;
 
@@ -114,6 +119,10 @@ static double g_FloorSeconds = 0.0;
 static bool   g_TimerStarted = false;  // the first monsters of the floor have appeared
 static double g_EnemyObject = -1.0;    // asset index of kEnemyParentObject (-1 = unknown)
 static double g_WallSeconds = 0.0;     // real time since the floor started, monsters or not
+static int    g_EnemiesNow = 1;        // monsters seen at the last check
+static double g_NoEnemiesSeconds = 0.0;  // how long there has been no monster
+static bool   g_TimerFrozen = false;   // no monster left: the countdown is stopped
+static bool   g_NearShrine = false;    // the last room (the one with the altar) is loaded
 static bool   g_IsTemple = true;       // the floor being played is a Slorm Temple floor
 static int    g_ResultBonus = 0;       // bonus shown after a clear
 static double g_ResultUntil = 0.0;     // NowSeconds() until which the result is shown
@@ -206,6 +215,14 @@ static void WriteTempleData(const std::vector<double>& Values)
 // Floor timer: counted in the controller's End Step, so pauses barely count.
 // ============================================================
 
+// The countdown only freezes in the last room. The monsters appear room by room, so "no monster left" alone
+// also happens between two rooms; but the altar (obj_temple_shrine) only exists once the last room is loaded.
+static bool LastRoomLoaded()
+{
+    RValue shrineObj = g_Yytk->CallBuiltin("asset_get_index", { "obj_temple_shrine" });
+    return ReadNumber(g_Yytk->CallBuiltin("instance_number", { shrineObj })) >= 1.0;
+}
+
 static void RunRoomUi();
 static void DrawPageIfOpen(int Tag);
 static void DrawRoomNotice();
@@ -242,12 +259,38 @@ static void OnEndStep()
             return;
 
         g_TimerStarted = true;
+        g_EnemiesNow = enemies;
         DbgPrintEx(LOG_SEVERITY_INFO, "[TempleRush] first monsters (%d) %.1f s after the floor started: countdown starts",
             enemies, g_WallSeconds);
         return;
     }
 
-    g_FloorSeconds += dt;
+    // Once the monsters are gone (the last room is cleared) the countdown stops and the bonus is kept.
+    // If monsters appear again (a boss, a new wave) it goes on.
+    if (g_EnemyObject >= 0.0)
+    {
+        static int checkTick = 0;
+        if (++checkTick % kEnemyCheckInterval == 0)
+            g_EnemiesNow = static_cast<int>(ReadNumber(g_Yytk->CallBuiltin("instance_number", { RValue(g_EnemyObject) })));
+
+        if (g_EnemiesNow <= 0)
+            g_NoEnemiesSeconds += dt;
+        else
+            g_NoEnemiesSeconds = 0.0;
+
+        if (checkTick % kEnemyCheckInterval == 0)
+            g_NearShrine = LastRoomLoaded();
+    }
+
+    const bool frozen = g_NoEnemiesSeconds >= kFreezeDelaySeconds && g_NearShrine;
+    if (frozen != g_TimerFrozen)
+    {
+        g_TimerFrozen = frozen;
+        DbgPrintEx(LOG_SEVERITY_INFO, "[TempleRush] %s at %.1f s", frozen ? "no monster left: countdown frozen" : "monsters again: countdown goes on", g_FloorSeconds);
+    }
+
+    if (!g_TimerFrozen)
+        g_FloorSeconds += dt;
 }
 
 static void CodeEventCallback(FWCodeEvent& Context)
@@ -310,10 +353,14 @@ static void GmText(double X, double Y, const char* Text, double Scale)
 static void DrawPanel(const char* Text, double Fraction, int R, int G, int B)
 {
     const double guiWidth = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_width", {}));
-    const double left = guiWidth / 2.0 - kPanelWidth / 2.0;
-    const double right = left + kPanelWidth;
-    const double top = kPanelTop;
-    const double bottom = top + kPanelHeight;
+    const double guiHeight = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_height", {}));
+    const double left = kPanelLeftFrac * guiWidth;
+    const double right = left + kPanelWidthFrac * guiWidth;
+    const double top = kPanelTopFrac * guiHeight;
+    const double bottom = top + kPanelHeightFrac * guiHeight;
+    const double width = right - left;
+    const double bar = guiHeight / 720.0;          // thickness unit of the bar
+    const double textScale = guiHeight / 900.0 * 1.3;
 
     GmAlpha(0.6);
     GmColor(0, 0, 0);
@@ -322,15 +369,15 @@ static void DrawPanel(const char* Text, double Fraction, int R, int G, int B)
     GmAlpha(1.0);
     GmColor(R, G, B);
     GmAlign(1, 1);
-    GmText(guiWidth / 2.0, top + (kPanelHeight - 6.0) / 2.0, Text, 1.2);
+    GmText((left + right) / 2.0, top + (bottom - top - 8.0 * bar) / 2.0, Text, textScale);
 
     // Bar along the bottom edge: dark track, then the remaining part.
     GmColor(60, 60, 60);
-    GmRect(left + 4.0, bottom - 7.0, right - 4.0, bottom - 3.0);
+    GmRect(left + 4.0 * bar, bottom - 7.0 * bar, right - 4.0 * bar, bottom - 3.0 * bar);
     if (Fraction > 0.0)
     {
         GmColor(R, G, B);
-        GmRect(left + 4.0, bottom - 7.0, left + 4.0 + (kPanelWidth - 8.0) * (Fraction > 1.0 ? 1.0 : Fraction), bottom - 3.0);
+        GmRect(left + 4.0 * bar, bottom - 7.0 * bar, left + 4.0 * bar + (width - 8.0 * bar) * (Fraction > 1.0 ? 1.0 : Fraction), bottom - 3.0 * bar);
     }
 
     GmColor(255, 255, 255);
@@ -340,7 +387,7 @@ static void DrawPanel(const char* Text, double Fraction, int R, int G, int B)
 
 static void DrawTimer()
 {
-    char text[32];
+    char text[40];
 
     if (g_FloorRunning && g_IsTemple)
     {
@@ -350,8 +397,18 @@ static void DrawTimer()
         {
             const int left = static_cast<int>(std::ceil(tier->seconds - seconds));
             const double start = TierFloorSeconds(tier);
-            std::snprintf(text, sizeof(text), "+%d   %d:%02d", tier->bonus, left / 60, left % 60);
-            DrawPanel(text, (tier->seconds - seconds) / (tier->seconds - start), tier->r, tier->g, tier->b);
+            const double fraction = (tier->seconds - seconds) / (tier->seconds - start);
+            if (g_TimerFrozen)
+            {
+                // No monster left: the bonus is locked in.
+                std::snprintf(text, sizeof(text), "+%d   %d:%02d  OK", tier->bonus, left / 60, left % 60);
+                DrawPanel(text, fraction, 120, 255, 120);
+            }
+            else
+            {
+                std::snprintf(text, sizeof(text), "+%d   %d:%02d", tier->bonus, left / 60, left % 60);
+                DrawPanel(text, fraction, tier->r, tier->g, tier->b);
+            }
         }
         else if (seconds <= kLastTierSeconds + kExpiredSeconds)
         {
@@ -401,6 +458,10 @@ static RValue& FloorStartHook(
     g_FloorRunning = true;
     g_FloorSeconds = 0.0;
     g_WallSeconds = 0.0;
+    g_EnemiesNow = 1;
+    g_NoEnemiesSeconds = 0.0;
+    g_TimerFrozen = false;
+    g_NearShrine = false;
 
     // Without the monsters' parent object there is nothing to wait for: count from the start.
     g_EnemyObject = ReadNumber(g_Yytk->CallBuiltin("asset_get_index", { kEnemyParentObject }));
@@ -691,11 +752,13 @@ static void DrawRoomNotice()
             "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : %zu pi" FR_E_GRAVE "ces au lieu de %zu"), g_NoticeKept, g_NoticeOriginal);
 
     const double guiWidth = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_width", {}));
-    const double textWidth = ReadNumber(g_Yytk->CallBuiltin("string_width", { text }));
-    const double width = (textWidth + 40.0 > kPanelWidth) ? textWidth + 40.0 : kPanelWidth;
+    const double guiHeight = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_height", {}));
+    const double scale = guiHeight / 900.0 * 1.0;
+    const double textWidth = ReadNumber(g_Yytk->CallBuiltin("string_width", { text })) * scale;
+    const double width = textWidth + 40.0 * scale;
     const double left = guiWidth / 2.0 - width / 2.0;
-    const double top = kPanelTop + kPanelHeight + 8.0;
-    const double bottom = top + kPanelHeight;
+    const double top = 0.09 * guiHeight;
+    const double bottom = top + 0.047 * guiHeight;
 
     GmAlpha(0.6);
     GmColor(0, 0, 0);
@@ -703,7 +766,7 @@ static void DrawRoomNotice()
     GmAlpha(1.0);
     GmColor(120, 255, 200);
     GmAlign(1, 1);
-    GmText(guiWidth / 2.0, (top + bottom) / 2.0, text, 1.0);
+    GmText(guiWidth / 2.0, (top + bottom) / 2.0, text, scale);
     GmAlign(0, 0);
     GmColor(255, 255, 255);
 }

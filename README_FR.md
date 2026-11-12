@@ -59,16 +59,22 @@ Le niveau est enregistré **par emplacement de sauvegarde** dans `TempleRush_roo
 
 ## Minuteur à l'écran
 
-Pendant un étage du Temple, un petit cadre en haut de l'écran montre le bonus que tu peux encore
-obtenir et le temps qu'il te reste, avec une barre qui se vide. Le décompte démarre à l'apparition
-des premiers monstres de l'étage : avant, le cadre affiche le temps complet, figé.
+Pendant un étage du Temple, un petit cadre en haut à droite de l'écran (sous la ligne « Trouver l'Autel » du jeu)
+montre le bonus que tu peux encore obtenir et le temps qu'il te reste, avec une barre qui se vide. Le
+décompte démarre à l'apparition des premiers monstres de l'étage : avant, le cadre affiche le temps complet, figé.
+
+Les monstres apparaissent pièce par pièce : le décompte continue donc entre deux pièces. Dans la **dernière pièce**
+(celle de l'autel), dès que le dernier monstre est mort, le décompte **se fige** : le cadre devient vert avec « OK » et
+le bonus atteint est gardé, donc marcher jusqu'à l'autel et ramasser le Slorm ne te coûte rien. Si des monstres
+réapparaissent, il repart.
 
 
 | Cadre | Signification |
 |-------|---------------|
 | `+5  0:23` (or) | 23 secondes pour terminer l'étage et gagner +5 étages |
-| `+1  1:12` (bleu) | 1 min 12 s pour terminer l'étage et gagner +2 étages |
+| `+2  1:12` (bleu) | 1 min 12 s pour terminer l'étage et gagner +2 étages |
 | `+0  0:00` (gris) | trop tard, pas de bonus (disparaît au bout de 5 secondes) |
+| `+4  0:05  OK` (vert) | dernière pièce terminée : le décompte est figé et le bonus est gardé |
 | `+1` (vert) | après la fin de l'étage : le bonus obtenu (affiché 6 secondes) |
 
 Il ne s'affiche que dans Le Temple du Slorm, pas dans le Champ de Bataille ni dans la Grande Forge.
@@ -111,6 +117,10 @@ Visual Studio 2022 ou plus récent, avec « Développement Desktop en C++ ». Ou
 et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont dans `include/`.
 
 ## Historique des versions
+
+### 1.2.2
+- Le minuteur est déplacé sous la ligne « Trouver l'Autel » du jeu (en haut à droite) et s'adapte à la résolution.
+- Le décompte se fige dans la dernière pièce (celle de l'autel) dès que le dernier monstre est mort, et le bonus est gardé.
 
 ### 1.2.1
 - Boutons de remboursement sur la page de l'amélioration : **Rembourser** (dernier niveau) et **Tout rembourser** (demande un second clic).
