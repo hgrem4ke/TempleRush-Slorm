@@ -2,19 +2,53 @@
 
 *Version française : [README_FR.md](README_FR.md)*
 
-Rewards fast clears in **The Slorm Temple**: the faster you clear a floor, the more floors you unlock.
+Two things for **The Slorm Temple**: fast clears unlock more floors, and a new Juicy Slorm upgrade removes rooms from every floor.
+
+## Fast clear bonus
+
+The faster you clear a floor, the more floors you unlock.
 
 | Clear time | Floors unlocked |
 |------------|-----------------|
 | Over 2 minutes | 1 (the game's normal progression) |
-| Within 2 minutes | 2 (+1, double progression) |
-| Within 30 seconds | 6 (+5, six times the progression) |
+| Within 2 minutes | 3 (+2) |
+| Within 90 seconds | 4 (+3) |
+| Within 1 minute | 5 (+4) |
+| Within 30 seconds | 6 (+5) |
 
 For example, if floor 61 is your highest cleared floor and you clear floor 62 in under 2 minutes,
-floor 64 becomes available instead of 63.
+floor 65 becomes available instead of 63.
 
 The bonus only applies when you clear a floor for the first time (a new highest floor). Replaying a
 floor you already cleared gives no bonus. The game's executable is never changed.
+
+## Temple Floor Room Count (Juicy Slorm upgrade)
+
+Talk to the Juicy Slorm: a diamond marked **M** appears at the bottom right of the "Personnage" window.
+Click it to open the TempleRush page. It lists the mod's upgrades in the style of the game's own list
+(more can be added later); click a row to select it, then **Buy**.
+
+**Temple Floor Room Count** removes rooms from every Slorm Temple floor:
+
+- each level is worth 0.1 room, and only whole rooms count: one room is removed every 10 levels, up to
+  5 rooms at level 50 (the maximum);
+- a floor always keeps at least 3 rooms;
+- a level costs 500 x its number, in Pure Slorm.
+
+| Level reached | Rooms removed | Cumulative cost (Pure Slorm) |
+|--------------:|--------------:|-----------------------------:|
+| 1 | 0 | 500 |
+| 10 | 1 | 27,500 |
+| 20 | 2 | 105,000 |
+| 30 | 3 | 232,500 |
+| 40 | 4 | 410,000 |
+| 50 | 5 | 637,500 |
+
+The **EN | FR** switch at the top left of the page changes its language (it is remembered; the first
+time it follows the language of Windows). Esc, the X button or a click outside the page closes it.
+
+The level is saved **per save slot** in `TempleRush_rooms.txt`, in the game folder (not in the game's own
+save file). Copy that file along with your save if you move to another PC.
 
 ## Timer on screen
 
@@ -25,7 +59,7 @@ floor appear: until then the panel shows the full time, frozen.
 | Panel | Meaning |
 |-------|---------|
 | `+5  0:23` (gold) | 23 seconds left to clear the floor for +5 floors |
-| `+1  1:12` (blue) | 1 min 12 s left to clear the floor for +1 floor |
+| `+2  1:12` (blue) | 1 min 12 s left to clear the floor for +2 floors |
 | `+0  0:00` (grey) | too late, no bonus (disappears after 5 seconds) |
 | `+1` (green) | after the clear: the bonus you got (shown for 6 seconds) |
 
@@ -50,12 +84,14 @@ You need [Aurie Framework](https://github.com/AurieFramework/Aurie) and
 
 Copy `x64/Release/TempleRush.dll` into `The Slormancer\mods\Aurie\` (game closed).
 
-To uninstall, delete `TempleRush.dll`. The floors you unlocked stay unlocked.
+To uninstall, delete `TempleRush.dll` (and `TempleRush_rooms.txt` if you want to forget the upgrade level).
+The floors you unlocked stay unlocked.
 
 ## Settings
 
-None: the times (120 s and 30 s) and bonuses (+1 and +5) are fixed in the code. To change them, edit
-the constants at the top of `source/ModuleMain.cpp` and rebuild.
+The times (120, 90, 60 and 30 s), the bonuses (+2, +3, +4 and +5) and the upgrade prices (`kPriceBase`) are fixed
+in the code. To change them, edit the constants in `source/ModuleMain.cpp` and rebuild. The only thing saved
+is the upgrade level and the page language, in `TempleRush_rooms.txt`.
 
 The timer counts at most 0.25 s per frame, so pausing the game barely counts but does not stop it
 completely.
@@ -66,6 +102,12 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 **Release / x64**. The Aurie and YYToolkit v5.0.0c headers are in `include/`.
 
 ## Changelog
+
+### 1.2.0
+- New Juicy Slorm upgrade "Temple Floor Room Count": an **M** diamond in the "Personnage" window opens a page
+  where you spend Pure Slorm to remove up to 5 rooms from every Temple floor (level saved per save slot).
+- New bonus tiers: under 2 minutes +2, under 90 seconds +3, under 1 minute +4, under 30 seconds +5.
+- English / French switch on the page.
 
 ### 1.1.0
 - Timer on screen: shows the bonus still possible and the time left, with a bar.
