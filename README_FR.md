@@ -118,6 +118,9 @@ et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont d
 
 ## Historique des versions
 
+### 1.2.3
+- L'icône « M » qui ouvre la page de l'amélioration est déplacée en bas à gauche de la fenêtre, près du bouton « ? ».
+
 ### 1.2.2
 - Le minuteur est déplacé sous la ligne « Trouver l'Autel » du jeu (en haut à droite) et s'adapte à la résolution.
 - Le décompte se fige dans la dernière pièce (celle de l'autel) dès que le dernier monstre est mort, et le bonus est gardé.

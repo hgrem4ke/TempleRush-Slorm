@@ -909,10 +909,10 @@ static bool Inside(const MouseState& M, double X1, double Y1, double X2, double 
 // The "M" icon in the Juicy Slorm's window, and the page it opens.
 // ------------------------------------------------------------
 
-// The M icon sits in the bottom bar of the "Personnage" window, right of the red arrow.
+// The M icon sits in the bottom bar of the "Personnage" window, bottom left, next to the "?" button.
 // Position as a fraction of the screen. It is drawn on the screen itself, after the game's menu.
-static constexpr double kIconCenterX = 0.8325;
-static constexpr double kIconCenterY = 0.9500;
+static constexpr double kIconCenterX = 0.1720;
+static constexpr double kIconCenterY = 0.9290;
 static constexpr double kIconSize = 0.046;     // fraction of the screen height
 
 static PFUNC_YYGMLScript g_OrigPanel = nullptr;      // scr_mage_panel_upgrades: drawn while the NPC's list is shown

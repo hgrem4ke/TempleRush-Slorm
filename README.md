@@ -116,6 +116,9 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 
 ## Changelog
 
+### 1.2.3
+- The "M" icon that opens the upgrade page moved to the bottom left of the window, next to the "?" button.
+
 ### 1.2.2
 - The timer moved under the game's "Find the Shrine" line (top right) and scales with the resolution.
 - The countdown freezes in the last room (where the altar is) once the last monster is dead, and the bonus is kept.
