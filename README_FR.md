@@ -118,6 +118,9 @@ et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont d
 
 ## Historique des versions
 
+### 1.2.4
+- Portail corrigé : après un nouveau record avec un bonus de temps, il t'envoie à l'étage terminé + 1 + le bonus (il t'envoyait seulement à l'étage suivant, surtout sur le premier étage après le lancement du jeu).
+
 ### 1.2.3
 - L'icône « M » qui ouvre la page de l'amélioration est déplacée en bas à gauche de la fenêtre, près du bouton « ? ».
 

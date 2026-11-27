@@ -116,6 +116,9 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 
 ## Changelog
 
+### 1.2.4
+- Fixed the portal: after a new record with a time bonus, it now takes you to the floor you cleared + 1 + the bonus (it used to send you to the next floor only, especially on the first floor after starting the game).
+
 ### 1.2.3
 - The "M" icon that opens the upgrade page moved to the bottom left of the window, next to the "?" button.
 

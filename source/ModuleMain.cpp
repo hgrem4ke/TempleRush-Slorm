@@ -223,6 +223,29 @@ static bool LastRoomLoaded()
     return ReadNumber(g_Yytk->CallBuiltin("instance_number", { shrineObj })) >= 1.0;
 }
 
+// The portal moves the player by global.next_floor_jump floors (1 by default). After a record, the bonus
+// floors are added to it. The variable may not exist yet when the floor ends (it can be created later in
+// the game session), so the bonus is kept and applied every frame until the next floor starts.
+static int g_PendingJump = 0;
+static double g_JumpBase = 1.0;
+static bool g_JumpBaseKnown = false;
+
+static void ApplyPendingJump()
+{
+    if (g_PendingJump <= 0 || !IsTrue(g_Yytk->CallBuiltin("variable_global_exists", { "next_floor_jump" })))
+        return;
+
+    const double current = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { "next_floor_jump" }));
+    if (!g_JumpBaseKnown)
+    {
+        g_JumpBase = current;
+        g_JumpBaseKnown = true;
+    }
+    const double wanted = g_JumpBase + g_PendingJump;
+    if (current != wanted)
+        g_Yytk->CallBuiltin("variable_global_set", { "next_floor_jump", RValue(wanted) });
+}
+
 static void RunRoomUi();
 static void DrawPageIfOpen(int Tag);
 static void DrawRoomNotice();
@@ -230,6 +253,7 @@ static void DrawRoomNotice();
 static void OnEndStep()
 {
     RunRoomUi();
+    ApplyPendingJump();
 
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
@@ -468,6 +492,10 @@ static RValue& FloorStartHook(
     g_TimerStarted = g_EnemyObject < 0.0;
     g_IsTemple = IsTempleMode();
     g_ResultBonus = 0;
+    g_PendingJump = 0;
+    g_JumpBaseKnown = false;
+    if (IsTrue(g_Yytk->CallBuiltin("variable_global_exists", { "next_floor_jump" })))
+        g_Yytk->CallBuiltin("variable_global_set", { "next_floor_jump", RValue(1.0) });
     QueryPerformanceCounter(&g_LastCounter);
 
     // The game updates the highest floor before it calls scr_floor_end: remember the value
@@ -518,6 +546,11 @@ static RValue& FloorEndHook(
     {
         data[kHighestFloorIndex] = after + bonus;
         WriteTempleData(data);
+
+        // The portal takes the bonus floors too.
+        g_PendingJump = bonus;
+        g_JumpBaseKnown = false;
+        ApplyPendingJump();
 
         g_ResultBonus = bonus;
         g_ResultUntil = NowSeconds() + kResultSeconds;
