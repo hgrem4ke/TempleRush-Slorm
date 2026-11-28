@@ -11,6 +11,9 @@ on:
       tag:
         description: "Release tag to upload (e.g. v1.3.1)"
         required: true
+      file_id:
+        description: "Nexus file id to use instead of the default (optional)"
+        required: false
 
 permissions:
   contents: read
@@ -62,7 +65,7 @@ jobs:
         uses: Nexus-Mods/upload-action@v1.0.0-beta.11
         with:
           api_key: ${{ secrets.NEXUSMODS_API_KEY }}
-          file_id: ${{ env.NEXUS_FILE_ID }}
+          file_id: ${{ inputs.file_id || env.NEXUS_FILE_ID }}
           filename: ${{ steps.release.outputs.zip }}
           version: ${{ steps.release.outputs.version }}
           display_name: TempleRush ${{ steps.release.outputs.version }}
