@@ -20,7 +20,7 @@ permissions:
 
 env:
   # TempleRush on Nexus Mods
-  NEXUS_FILE_ID: uKw80Kp9F           # "short Unique File ID" of the file to add a version to
+  NEXUS_FILE_ID: "8477055"            # "File ID" (the number) of the file to add a version to
   NEXUS_MOD_ID: "44272522887190"      # "Unique Mod ID", needed for the changelog
 
 jobs:
