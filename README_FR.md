@@ -24,8 +24,8 @@ Le bonus ne s'applique que la première fois que tu termines un étage (nouveau 
 
 ## Pièces par étage du Temple (amélioration du Slorm Juteux)
 
-Parle au Slorm Juteux : une étoile grise (l'icône de la Slormite, sur le carré noir en haut à gauche du portrait
-du PNJ) ouvre la page de TempleRush, dans le style du panneau de SlormReslormitizer (le cadre, le sélecteur,
+Parle au Slorm Juteux : la boîte à cadre doré **Temple rush**, sur le carré noir en haut à gauche du portrait
+du PNJ, ouvre la page de TempleRush, dans le style du panneau de SlormReslormitizer (le cadre, le sélecteur,
 les boutons et les polices du jeu). Elle liste les améliorations du mod (d'autres pourront être ajoutées) ;
 clique sur une ligne pour la sélectionner, puis sur **Acheter**. La page a son propre sélecteur de langue
 (anglais / français).
@@ -54,10 +54,10 @@ clique sur une ligne pour la sélectionner, puis sur **Acheter**. La page a son 
 Le prix payé pour chaque rang est enregistré : un changement de prix dans une version future ne te fait rien perdre.
 Descendre d'un rang rend la pièce correspondante, à partir de l'étage suivant.
 
-**En entrant dans un étage**, un petit cadre sous le chronomètre indique pendant 8 secondes ce que l'amélioration a fait :
-« 4 pièces au lieu de 6 », « … (minimum atteint) » ou « aucune pièce retirée, l'étage est déjà au minimum ».
+**Pendant un étage**, une ligne sous le minuteur indique ce que l'amélioration a fait, tant que tu le joues :
+« -2 pièces : 4 au lieu de 6 », « … (minimum atteint) » ou « Aucune pièce retirée : déjà au minimum ».
 
-Le sélecteur **EN | FR** en haut à gauche de la page change sa langue (il est mémorisé ; la première fois, il
+Le sélecteur **Langue** en haut à gauche de la page change sa langue (il est mémorisé ; la première fois, il
 suit la langue de Windows). Échap, le bouton X ou un clic en dehors de la page la ferme.
 
 Le niveau est enregistré **par emplacement de sauvegarde** dans `TempleRush_rooms.txt`, dans le dossier du jeu
@@ -65,25 +65,29 @@ Le niveau est enregistré **par emplacement de sauvegarde** dans `TempleRush_roo
 
 ## Minuteur à l'écran
 
-Pendant un étage du Temple, un petit cadre en haut à droite de l'écran (sous la ligne « Trouver l'Autel » du jeu)
-montre le bonus que tu peux encore obtenir et le temps qu'il te reste, avec une barre qui se vide. Le
-décompte démarre à l'apparition des premiers monstres de l'étage : avant, le cadre affiche le temps complet, figé.
+Pendant un étage du Temple, un cadre en forme de titre d'objet apparaît en haut à droite de l'écran, sous la ligne
+« Trouver l'Autel » du jeu et sa barre de Slorm à dépenser. Il affiche **ÉTAGE SUIVANT +N** et le temps qu'il te
+reste pour ce bonus. La bordure et le texte changent de couleur avec le bonus, comme la rareté d'un objet : gris-bleu
+pour +2, or pour +3, orange pour +4 et violet (Néant) pour +5. Le décompte démarre à l'apparition des premiers monstres
+de l'étage : avant, le cadre affiche le temps complet, figé.
 
 Les monstres apparaissent pièce par pièce : le décompte continue donc entre deux pièces. Dans la **dernière pièce**
-(celle de l'autel), dès que le dernier monstre est mort, le décompte **se fige** : le cadre devient vert avec « OK » et
-le bonus atteint est gardé, donc marcher jusqu'à l'autel et ramasser le Slorm ne te coûte rien. Si des monstres
-réapparaissent, il repart.
-
+(celle de l'autel), dès que le dernier monstre est mort, le décompte **se fige** : « OK » s'ajoute et le bonus atteint
+est gardé, donc marcher jusqu'à l'autel et ramasser le Slorm ne te coûte rien. Si des monstres réapparaissent, il repart.
 
 | Cadre | Signification |
 |-------|---------------|
-| `+5  0:23` (or) | 23 secondes pour terminer l'étage et gagner +5 étages |
-| `+2  1:12` (bleu) | 1 min 12 s pour terminer l'étage et gagner +2 étages |
-| `+0  0:00` (gris) | trop tard, pas de bonus (disparaît au bout de 5 secondes) |
-| `+4  0:05  OK` (vert) | dernière pièce terminée : le décompte est figé et le bonus est gardé |
-| `+1` (vert) | après la fin de l'étage : le bonus obtenu (affiché 6 secondes) |
+| `ÉTAGE SUIVANT +5  0:23` (violet) | 23 secondes pour terminer l'étage et gagner +5 étages |
+| `ÉTAGE SUIVANT +2  1:12` (gris-bleu) | 1 min 12 s pour terminer l'étage et gagner +2 étages |
+| `ÉTAGE SUIVANT +0  0:00` (gris) | trop tard, pas de bonus (disparaît au bout de 5 secondes) |
+| `ÉTAGE SUIVANT +4  0:05 OK` (orange) | dernière pièce terminée : le décompte est figé et le bonus est gardé |
+| `ÉTAGE SUIVANT +3` | après la fin de l'étage : le bonus obtenu (affiché 6 secondes) |
 
 Il ne s'affiche que dans Le Temple du Slorm, pas dans le Champ de Bataille ni dans la Grande Forge.
+
+**Étages de boss.** Le jeu a un boss tous les 50 étages (50, 100 et 150) et lance une partie sur ton étage le plus haut.
+Un bonus ne te fait jamais passer au-dessus d'un étage de boss : il s'arrête une marche avant, pour que tu puisses
+jouer le boss et obtenir son artefact.
 
 ## Fonctionnement
 
@@ -123,6 +127,13 @@ Visual Studio 2022 ou plus récent, avec « Développement Desktop en C++ ». Ou
 et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont dans `include/`.
 
 ## Historique des versions
+
+### 1.3.1
+- Le bouton d'ouverture est maintenant une boîte à cadre doré **Temple rush** (le cadre et la police du jeu) sur le portrait du PNJ, centrée dessus.
+- La page est plus compacte : les Slorm possédés et la description de l'amélioration sont sur un fond rouge sombre, et l'icône du Slorm pur suit le prix et les remboursements.
+- Le minuteur est maintenant un cadre en forme de titre d'objet, avec « ÉTAGE SUIVANT +N » et le temps. La bordure et le texte changent de couleur avec le bonus : gris-bleu +2, or +3, orange +4, violet +5. Il se place sous la barre de Slorm à dépenser du jeu.
+- Le message sur les pièces retirées reste affiché pendant l'étage (il disparaissait au bout de 8 secondes).
+- Le bonus de temps ne te fait plus passer au-dessus d'un étage de boss (50, 100, 150) : tu arrives sur l'étage du boss, pour pouvoir le jouer.
 
 ### 1.3.0
 - Nouvelle page pour l'amélioration, dans le style du panneau de SlormReslormitizer (un mod de wistb) : le cadre, le sélecteur, les boutons et les polices du jeu. Le bouton d'ouverture est maintenant son étoile Slormite, grise (bleue quand la page est ouverte), sur le portrait du PNJ, à la place du losange M.

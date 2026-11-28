@@ -50,10 +50,10 @@ struct BonusTier
 };
 
 static constexpr BonusTier kTiers[] = {
-    { 120.0, 2,  90, 200, 255 },
-    {  90.0, 3, 120, 255, 200 },
-    {  60.0, 4, 255, 170,  60 },
-    {  30.0, 5, 255, 215,   0 },
+    { 120.0, 2, 119, 145, 161 },     // +2 blue-grey  (the main color of the game's frame of that rarity)
+    {  90.0, 3, 239, 198,  92 },     // +3 gold       (same)
+    {  60.0, 4, 236, 127,  18 },     // +4 orange     (same)
+    {  30.0, 5, 119,  44, 170 },     // +5 purple     (the Nether frame, #772CAA: also the color of Nether item names)
 };
 static constexpr size_t kTierCount = sizeof(kTiers) / sizeof(kTiers[0]);
 static constexpr double kLastTierSeconds = kTiers[0].seconds;   // the slowest threshold
@@ -84,7 +84,7 @@ static constexpr double kMaxFrameSeconds = 0.25;
 // Fractions of the screen: under the game's "Find the Shrine" line, below the minimap (top right).
 static constexpr double kPanelLeftFrac = 0.793;
 static constexpr double kPanelWidthFrac = 0.199;
-static constexpr double kPanelTopFrac = 0.325;
+static constexpr double kPanelTopFrac = 0.288;      // just under the game's "Find the Shrine" bar
 static constexpr double kPanelHeightFrac = 0.062;
 
 // The countdown freezes once no monster is left for this long (the last room is cleared): the bonus is kept.
@@ -377,36 +377,79 @@ static void GmText(double X, double Y, const char* Text, double Scale)
         { RValue(X), RValue(Y), Text, RValue(Scale), RValue(Scale), RValue(0.0) });
 }
 
-// One panel: "+N  m:ss" over a bar. Fraction = part of the bar still filled (0 to 1).
-static void DrawPanel(const char* Text, double Fraction, int R, int G, int B)
+// The timer is drawn like the game's objective bar ("Find the Shrine"): its own frame sprite, a colored fill that
+// empties as the time runs out, the bonus on the left and the time on the right, in the game's font.
+static void GText(double X, double Y, const char* Content, const char* Font, const char* Color, int Align);
+static RValue GAsset(const char* Name);
+static double UiScale(double H);
+
+// 252 x 44 sprite, on the same column as the game's own bars under the minimap (top right of the screen).
+static void TimerBarRect(double& Left, double& Top, double& Width, double& Height, double& Scale)
 {
     const double guiWidth = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_width", {}));
     const double guiHeight = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_height", {}));
-    const double left = kPanelLeftFrac * guiWidth;
-    const double right = left + kPanelWidthFrac * guiWidth;
-    const double top = kPanelTopFrac * guiHeight;
-    const double bottom = top + kPanelHeightFrac * guiHeight;
-    const double width = right - left;
-    const double bar = guiHeight / 720.0;          // thickness unit of the bar
-    const double textScale = guiHeight / 900.0 * 1.3;
+    Scale = UiScale(guiHeight);
+    Width = 252.0 * Scale;
+    Height = 60.0 * Scale;
+    Left = guiWidth * 0.995 - Width;
+    // One bar lower than "Find the Shrine": under the game's bar of Slorm to spend, which it shows below it.
+    Top = kPanelTopFrac * guiHeight + 47.0 * Scale;
+}
 
-    GmAlpha(0.6);
-    GmColor(0, 0, 0);
-    GmRect(left, top, right, bottom);
-
-    GmAlpha(1.0);
-    GmColor(R, G, B);
-    GmAlign(1, 1);
-    GmText((left + right) / 2.0, top + (bottom - top - 8.0 * bar) / 2.0, Text, textScale);
-
-    // Bar along the bottom edge: dark track, then the remaining part.
-    GmColor(60, 60, 60);
-    GmRect(left + 4.0 * bar, bottom - 7.0 * bar, right - 4.0 * bar, bottom - 3.0 * bar);
-    if (Fraction > 0.0)
+// The frames of the game's item titles (spr_item_tooltip_top, 496 x 168, one frame per rarity): the border changes
+// with the bonus, like the rarity of an item. Frame number, and where the picture starts in the sprite.
+static void TierFrame(int Bonus, int& Frame, double& TargetY)
+{
+    switch (Bonus)
     {
-        GmColor(R, G, B);
-        GmRect(left + 4.0 * bar, bottom - 7.0 * bar, left + 4.0 * bar + (width - 8.0 * bar) * (Fraction > 1.0 ? 1.0 : Fraction), bottom - 3.0 * bar);
+    case 2: Frame = 3; TargetY = 52.0; break;      // blue
+    case 3: Frame = 4; TargetY = 40.0; break;      // gold (yellow)
+    case 4: Frame = 5; TargetY = 44.0; break;      // orange
+    case 5: Frame = 8; TargetY = 44.0; break;      // purple (Nether)
+    default: Frame = 1; TargetY = 68.0; break;     // plain, for no bonus
     }
+}
+
+static const char* Tr(const char* English, const char* French);
+
+// The game's own text script (its fonts are sized for the UI scale, so the letters stay sharp) drawn in white through a
+// flat color: gpu fog gives all the text, shadow included, the color of the tier. Centered on X, Y.
+static void ColoredText(double X, double Y, const char* Text, const char* Font, int R, int G, int B)
+{
+    const double color = static_cast<double>(R | (G << 8) | (B << 16));
+    g_Yytk->CallBuiltin("gpu_set_fog", { RValue(true), RValue(color), RValue(0.0), RValue(1.0) });
+    GText(X, Y, Text, Font, "white", 1);
+    g_Yytk->CallBuiltin("gpu_set_fog", { RValue(false), RValue(0.0), RValue(0.0), RValue(1.0) });
+}
+
+// The timer: a frame like the title of an item, with "NEXT FLOOR +N  m:ss" centered in it, in the color of the tier.
+static void DrawPanel(const char* Text, int Bonus)
+{
+    double left, top, width, height, scale;
+    TimerBarRect(left, top, width, height, scale);
+
+    int frame;
+    double targetY;
+    TierFrame(Bonus, frame, targetY);
+    // Only the title box of the sprite: from where the picture starts down to the line of its origin (138).
+    const double partHeight = 138.0 - targetY;
+    const double k = width / 408.0;
+
+    g_Yytk->CallBuiltin("draw_sprite_part_ext", { GAsset("spr_item_tooltip_top"), RValue(static_cast<double>(frame)),
+        RValue(44.0), RValue(targetY), RValue(408.0), RValue(partHeight), RValue(left), RValue(top), RValue(k), RValue(k),
+        RValue(16777215.0), RValue(1.0) });
+
+    int r = 170, g = 170, b = 170;      // no bonus: grey
+    for (const BonusTier& tier : kTiers)
+        if (tier.bonus == Bonus)
+        {
+            r = tier.r;
+            g = tier.g;
+            b = tier.b;
+        }
+
+    const double my = top + (partHeight / 2.0 + 12.0) * k;     // a little below the middle of the title box
+    ColoredText(left + width / 2.0, my, Text, "ft_standard_14", r, g, b);      // the font of the item titles
 
     GmColor(255, 255, 255);
     GmAlpha(1.0);
@@ -415,7 +458,7 @@ static void DrawPanel(const char* Text, double Fraction, int R, int G, int B)
 
 static void DrawTimer()
 {
-    char text[40];
+    char text[96];
 
     if (g_FloorRunning && g_IsTemple)
     {
@@ -423,32 +466,23 @@ static void DrawTimer()
 
         if (const BonusTier* tier = FindTier(seconds))
         {
-            const int left = static_cast<int>(std::ceil(tier->seconds - seconds));
-            const double start = TierFloorSeconds(tier);
-            const double fraction = (tier->seconds - seconds) / (tier->seconds - start);
-            if (g_TimerFrozen)
-            {
-                // No monster left: the bonus is locked in.
-                std::snprintf(text, sizeof(text), "+%d   %d:%02d  OK", tier->bonus, left / 60, left % 60);
-                DrawPanel(text, fraction, 120, 255, 120);
-            }
-            else
-            {
-                std::snprintf(text, sizeof(text), "+%d   %d:%02d", tier->bonus, left / 60, left % 60);
-                DrawPanel(text, fraction, tier->r, tier->g, tier->b);
-            }
+            const int remaining = static_cast<int>(std::ceil(tier->seconds - seconds));
+            std::snprintf(text, sizeof(text), "%s +%d   %d:%02d%s", Tr("NEXT FLOOR", "\xC3\x89" "TAGE SUIVANT"), tier->bonus,
+                remaining / 60, remaining % 60, g_TimerFrozen ? " OK" : "");      // frozen: the bonus is locked in
+            DrawPanel(text, tier->bonus);
         }
         else if (seconds <= kLastTierSeconds + kExpiredSeconds)
         {
-            DrawPanel("+0   0:00", 0.0, 150, 150, 150);
+            std::snprintf(text, sizeof(text), "%s +0    0:00", Tr("NEXT FLOOR", "\xC3\x89" "TAGE SUIVANT"));
+            DrawPanel(text, 0);
         }
         return;
     }
 
     if (g_ResultBonus > 0 && NowSeconds() < g_ResultUntil)
     {
-        std::snprintf(text, sizeof(text), "+%d", g_ResultBonus);
-        DrawPanel(text, 1.0, 120, 255, 120);
+        std::snprintf(text, sizeof(text), "%s +%d", Tr("NEXT FLOOR", "\xC3\x89" "TAGE SUIVANT"), g_ResultBonus);
+        DrawPanel(text, g_ResultBonus);
     }
 }
 
@@ -462,6 +496,7 @@ static RValue& HudDrawHook(
 )
 {
     RValue& ret = g_OriginalHud(Self, Other, Result, ArgumentCount, Arguments);
+    g_DrawSelf = Self;
     DrawTimer();
     DrawRoomNotice();
     g_DrawSelf = Self;
@@ -542,9 +577,30 @@ static RValue& FloorEndHook(
     }
 
     const BonusTier* tier = FindTier(seconds);
-    const int bonus = tier ? tier->bonus : 0;
+    int bonus = tier ? tier->bonus : 0;
 
     const double after = data[kHighestFloorIndex];
+
+    // The game stops the list of floors at a boss floor (every slorm_temple_boss_every floors, up to
+    // slorm_temple_boss_max) until its boss is beaten, and starts a run on the highest floor: a bonus that jumps over
+    // a boss floor would leave the player unable to play it. So the bonus stops one floor before the boss floor.
+    if (bonus > 0 && after > before)
+    {
+        const double every = IsTrue(g_Yytk->CallBuiltin("variable_global_exists", { "slorm_temple_boss_every" }))
+            ? ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { "slorm_temple_boss_every" })) : 50.0;
+        const double last = IsTrue(g_Yytk->CallBuiltin("variable_global_exists", { "slorm_temple_boss_max" }))
+            ? ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { "slorm_temple_boss_max" })) : 150.0;
+        for (double boss = every; every >= 1.0 && boss <= last; boss += every)
+        {
+            if (after < boss && after + bonus >= boss)
+            {
+                const int allowed = static_cast<int>(boss - 1.0 - after);
+                DbgPrintEx(LOG_SEVERITY_INFO, "[TempleRush] boss floor %.0f: the bonus is cut from +%d to +%d", boss, bonus, allowed);
+                bonus = allowed < 0 ? 0 : allowed;
+                break;
+            }
+        }
+    }
 
     // Only when the game really moved the highest floor up (a floor already cleared gets no bonus).
     if (bonus > 0 && after > before)
@@ -835,49 +891,34 @@ static const char* Tr(const char* English, const char* French)
     return g_French ? French : English;
 }
 
-// "4 rooms instead of 6", under the timer, for a few seconds when a floor starts.
+// What the Room Count upgrade did on this floor, under the timer, for as long as the floor is being played.
 static void DrawRoomNotice()
 {
-    if (g_NoticeOriginal == 0)
+    if (g_NoticeOriginal == 0 || !(g_FloorRunning && g_IsTemple))
         return;
 
-    if (g_NoticePending)
-    {
-        g_NoticePending = false;
-        g_NoticeUntil = NowSeconds() + kNoticeSeconds;
-    }
-    if (NowSeconds() >= g_NoticeUntil)
-        return;
-
+    const size_t removed = g_NoticeOriginal > g_NoticeKept ? g_NoticeOriginal - g_NoticeKept : 0;
     char text[200];
     if (g_NoticeKind == 1)
-        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: no room removed, this floor is already at the minimum (%zu rooms)",
-            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : aucune pi" FR_E_GRAVE "ce retir" FR_E_ACUTE "e, l'" FR_E_ACUTE "tage est d" FR_E_ACUTE "j" FR_A_GRAVE " au minimum (%zu pi" FR_E_GRAVE "ces)"),
-            g_NoticeKept);
+        std::snprintf(text, sizeof(text), Tr("No room removed: already at the minimum (%zu rooms)",
+            "Aucune pi" FR_E_GRAVE "ce retir" FR_E_ACUTE "e : d" FR_E_ACUTE "j" FR_A_GRAVE " au minimum (%zu pi" FR_E_GRAVE "ces)"), g_NoticeKept);
     else if (g_NoticeKind == 2)
-        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: %zu rooms instead of %zu (minimum reached)",
-            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : %zu pi" FR_E_GRAVE "ces au lieu de %zu (minimum atteint)"),
-            g_NoticeKept, g_NoticeOriginal);
+        std::snprintf(text, sizeof(text), Tr("-%zu room%s: %zu instead of %zu (minimum reached)",
+            "-%zu pi" FR_E_GRAVE "ce%s : %zu au lieu de %zu (minimum atteint)"), removed, removed > 1 ? "s" : "", g_NoticeKept, g_NoticeOriginal);
     else
-        std::snprintf(text, sizeof(text), Tr("Room Count upgrade: %zu rooms instead of %zu",
-            "Am" FR_E_ACUTE "lioration des pi" FR_E_GRAVE "ces : %zu pi" FR_E_GRAVE "ces au lieu de %zu"), g_NoticeKept, g_NoticeOriginal);
+        std::snprintf(text, sizeof(text), Tr("-%zu room%s: %zu instead of %zu",
+            "-%zu pi" FR_E_GRAVE "ce%s : %zu au lieu de %zu"), removed, removed > 1 ? "s" : "", g_NoticeKept, g_NoticeOriginal);
 
     const double guiWidth = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_width", {}));
     const double guiHeight = ReadNumber(g_Yytk->CallBuiltin("display_get_gui_height", {}));
-    const double scale = guiHeight / 900.0 * 1.0;
-    const double textWidth = ReadNumber(g_Yytk->CallBuiltin("string_width", { text })) * scale;
-    const double width = textWidth + 40.0 * scale;
-    const double left = guiWidth / 2.0 - width / 2.0;
-    const double top = 0.09 * guiHeight;
-    const double bottom = top + 0.047 * guiHeight;
+    double barLeft, barTop, barWidth, barHeight, barScale;
+    TimerBarRect(barLeft, barTop, barWidth, barHeight, barScale);
+    (void)guiWidth;
+    (void)guiHeight;
 
-    GmAlpha(0.6);
-    GmColor(0, 0, 0);
-    GmRect(left, top, left + width, bottom);
+    // The game's own font and text script (sharp letters), in a flat color, centered under the timer's frame.
+    ColoredText(barLeft + barWidth / 2.0, barTop + barHeight + 16.0 * barScale, text, "ft_standard_12", 120, 255, 200);
     GmAlpha(1.0);
-    GmColor(120, 255, 200);
-    GmAlign(1, 1);
-    GmText(guiWidth / 2.0, (top + bottom) / 2.0, text, scale);
     GmAlign(0, 0);
     GmColor(255, 255, 255);
 }
@@ -1029,14 +1070,13 @@ static bool Inside(const MouseState& M, double X1, double Y1, double X2, double 
 // The "M" icon in the Juicy Slorm's window, and the page it opens.
 // ------------------------------------------------------------
 
-// The switch is the Slormite icon of SlormReslormitizer's panel (a mod by wistb, AGPL-3.0): grey, blue while the
-// page is open. It sits on the black square at the top left of the NPC's portrait. Position and size are in the
-// game's 1920x1080 layout, scaled by its UI scale.
-static constexpr double kIconCenterXUnits = 202.0;
-static constexpr double kIconCenterYUnits = 184.0;
-static constexpr double kIconSizeUnits = 48.0;
-static constexpr int kSlormiteFrame = 205;      // in spr_inventory_items
-static constexpr int kOpenBlue = 0xff9030;      // BGR
+// The switch is a small gold-framed box with "Temple rush" in the game's font, on the black square at the top left
+// of the NPC's portrait. The frame is the game's spr_support_borders (116 x 68, origin 12,12; frames: 0 gold,
+// 1 bright gold, 2 grey). Position and size are in the game's 1920x1080 layout, scaled by its UI scale.
+static constexpr double kIconCenterXUnits = 200.0;
+static constexpr double kIconCenterYUnits = 199.0;
+static constexpr double kIconDrawScale = 0.95;       // of the sprite's own size
+static constexpr double kBorderW = 116.0, kBorderH = 68.0, kBorderOrigin = 12.0;
 
 static PFUNC_YYGMLScript g_OrigPanel = nullptr;      // scr_mage_panel_upgrades: drawn while the NPC's list is shown
 static PFUNC_YYGMLScript g_OrigInventory = nullptr;  // scr_ui_menus_inventory: draws the "Personnage" window
@@ -1170,13 +1210,13 @@ static int g_SelectedUpgrade = 0;
 
 // Sizes in layout units (one unit = UI scale pixels).
 static constexpr double kPW = 570.0;        // panel width
-static constexpr double kPH = 450.0;        // panel height
+static constexpr double kPH = 404.0;        // panel height
 static constexpr double kPad = 30.0;
 static constexpr double kRow = 38.0;
 static constexpr double kArrowW = 24.0, kArrowH = 36.0, kBoxW = 220.0;
 static constexpr double kBtnW = 156.0, kBtnH = 52.0, kBtnSpriteW = 168.0;
 static constexpr double kLangY = 100.0;
-static constexpr double kButtonsY = 336.0;
+static constexpr double kButtonsY = 292.0;
 
 struct PageLayout
 {
@@ -1249,20 +1289,20 @@ static void RowRect(const PageLayout& L, int Index, double& X1, double& Y1, doub
 static void IconRect(double W, double H, double& X1, double& Y1, double& X2, double& Y2)
 {
     const double scale = UiScale(H);
-    const double size = kIconSizeUnits * scale;
     const double cx = (W - 1920.0 * scale) / 2.0 + kIconCenterXUnits * scale;
     const double cy = (H - 1080.0 * scale) / 2.0 + kIconCenterYUnits * scale;
-    X1 = cx - size / 2.0;
-    Y1 = cy - size / 2.0;
-    X2 = X1 + size;
-    Y2 = Y1 + size;
+    const double w = kBorderW * kIconDrawScale * scale, h = kBorderH * kIconDrawScale * scale;
+    X1 = cx - w / 2.0;
+    Y1 = cy - h / 2.0;
+    X2 = X1 + w;
+    Y2 = Y1 + h;
 }
 
 // Click area of the icon: the icon itself, a bit larger.
 static void IconHitRect(double W, double H, double& X1, double& Y1, double& X2, double& Y2)
 {
     IconRect(W, H, X1, Y1, X2, Y2);
-    const double grow = 0.1 * (Y2 - Y1);
+    const double grow = 0.05 * (Y2 - Y1);
     X1 -= grow; X2 += grow;
     Y1 -= grow; Y2 += grow;
 }
@@ -1400,6 +1440,24 @@ static void DrawGameFrame(const PageLayout& L)
     GSpritePart(box, 0, OL, 0, OW, OH, (x1 + x2 - OW * s) / 2.0, y1, OW * s, OH * s);
 }
 
+// The Pure Slorm icon (the game's white-blue drop), centered on X, Y, Size pixels high.
+static void DrawPureIcon(double X, double Y, double Size)
+{
+    const double scale = Size / 64.0;
+    g_Yytk->CallBuiltin("draw_sprite_ext", { GAsset("spr_pure_icon"), RValue(0.0), RValue(X), RValue(Y),
+        RValue(scale), RValue(scale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+}
+
+// A number followed by the Pure Slorm icon, the pair centered (Align 1) or ending at X (Align 2).
+static void GAmount(double X, double Y, const char* Text, const char* Color, int Align, double S)
+{
+    const double icon = 22.0 * S;
+    const double width = GTextWidth(Text, "ft_standard_12", S) * S + 6.0 * S + icon;
+    const double left = Align == 1 ? X - width / 2.0 : X - width;
+    GText(left, Y, Text, "ft_standard_12", Color, 0);
+    DrawPureIcon(left + width - icon / 2.0, Y, icon);
+}
+
 static int HoverFrame(bool Over, bool Down)
 {
     return Over ? (Down ? 2 : 1) : 0;
@@ -1501,22 +1559,25 @@ static void DrawRoomPage(const MouseState& M, double W, double H)
         GText(x2, my, level, "ft_standard_12", "item_highlight", 2);
     }
 
-    // The selected upgrade: what you have, what it does.
+    // The selected upgrade: what you have, what it does, on the game's dark red background.
     const UpgradeDef& sel = kUpgrades[g_SelectedUpgrade];
     double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
-    double y = kLangY + kRow * (1 + kUpgradeCount) + 14.0;
+    const double boxTop = kLangY + kRow * (1 + kUpgradeCount) + 12.0;
+    const double boxBottom = kButtonsY - 34.0;
+    FillRect(X(kPad - 4.0), Y(boxTop), X(R + 4.0), Y(boxBottom), 38, 12, 12, 1.0);
 
-    GText(X(kPad), Y(y), Tr("Slorm owned", "Slorm poss\xC3\xA9" "d\xC3\xA9s"));
+    double y = boxTop + 16.0;
+    GText(X(kPad + 6.0), Y(y), Tr("Slorm owned", "Slorm poss\xC3\xA9" "d\xC3\xA9s"), "ft_standard_12", "white", 0);
     std::snprintf(text, sizeof(text), "%.0f", gold);
-    GText(X(R), Y(y), text, "ft_standard_12", "white", 2);
-    y += 24.0;
+    GAmount(X(R - 6.0), Y(y), text, "white", 2, s);
+    y += 22.0;
 
     const double lineHeight = GTextHeight("ft_standard_11", s) + 2.0;
-    const std::vector<std::string> tip = WrapText(Tr(sel.TipEn, sel.TipFr), "ft_standard_11", R - kPad, s);
-    for (size_t i = 0; i < tip.size(); i++)
-        GText(X(kPad), Y(y + lineHeight * static_cast<double>(i)), tip[i].c_str(), "ft_standard_11", "grey");
+    const std::vector<std::string> tip = WrapText(Tr(sel.TipEn, sel.TipFr), "ft_standard_11", R - kPad - 12.0, s);
+    for (size_t i = 0; i < tip.size() && i < 2; i++)
+        GText(X(kPad + 6.0), Y(y + lineHeight * static_cast<double>(i)), tip[i].c_str(), "ft_standard_11", "grey");
 
-    // Price and refunds, over the three buttons.
+    // Price and refunds, over the three buttons, each followed by the Pure Slorm icon.
     const bool maxed = sel.Level() >= sel.MaxLevel();
     const bool canBuy = CanBuyUpgrade(sel, gold);
     const double refundOne = sel.RefundOneValue();
@@ -1524,14 +1585,16 @@ static void DrawRoomPage(const MouseState& M, double W, double H)
     const double captionY = kButtonsY - 14.0;
 
     if (maxed)
-        std::snprintf(text, sizeof(text), "-");
+        GText((L.buyL + L.buyR) / 2.0, Y(captionY), "-", "ft_standard_12", "white", 1);
     else
+    {
         std::snprintf(text, sizeof(text), "%.0f", sel.Price());
-    GText((L.buyL + L.buyR) / 2.0, Y(captionY), text, "ft_standard_12", (maxed || gold >= sel.Price()) ? "white" : "grey", 1);
+        GAmount((L.buyL + L.buyR) / 2.0, Y(captionY), text, gold >= sel.Price() ? "white" : "grey", 1, s);
+    }
     std::snprintf(text, sizeof(text), "+%.0f", refundOne);
-    GText((L.refL + L.refR) / 2.0, Y(captionY), text, "ft_standard_12", "item_highlight", 1);
+    GAmount((L.refL + L.refR) / 2.0, Y(captionY), text, "item_highlight", 1, s);
     std::snprintf(text, sizeof(text), "+%.0f", refundAll);
-    GText((L.allL + L.allR) / 2.0, Y(captionY), text, "ft_standard_12", "item_highlight", 1);
+    GAmount((L.allL + L.allR) / 2.0, Y(captionY), text, "item_highlight", 1, s);
 
     GButton(M, L, L.buyL, L.buyT, L.buyR, L.buyB, maxed ? "MAX" : Tr("Buy", "Acheter"), canBuy);
     GButton(M, L, L.refL, L.refT, L.refR, L.refB, Tr("Refund", "Rembourser"), refundOne > 0.0 || sel.Level() > 0);
@@ -1561,64 +1624,29 @@ static void DrawPageIfOpen(int Tag)
     GmAlign(0, 0);
 }
 
-static void SlormiteGrey(double Brightness)
-{
-    RValue shader = GAsset("shd_bright_contrast");
-    g_Yytk->CallBuiltin("shader_set", { shader });
-    auto uniform = [&](const char* Name, double Value)
-    {
-        RValue handle = g_Yytk->CallBuiltin("shader_get_uniform", { shader, RValue(Name) });
-        g_Yytk->CallBuiltin("shader_set_uniform_f", { handle, RValue(Value) });
-    };
-    uniform("fade", 1.0);
-    uniform("brightness_amount", Brightness);
-    uniform("contrast_amount", 0.0);
-}
-
-static void SlormiteFog(bool On, int Color)
-{
-    g_Yytk->CallBuiltin("gpu_set_fog", { RValue(On), RValue(static_cast<double>(Color)), RValue(0.0), RValue(1.0) });
-}
-
-static void SlormiteDraw(double X, double Y, double Scale, int Color, double Alpha)
-{
-    g_Yytk->CallBuiltin("draw_sprite_ext", { GAsset("spr_inventory_items"), RValue(static_cast<double>(kSlormiteFrame)), RValue(X), RValue(Y),
-        RValue(Scale), RValue(Scale), RValue(0.0), RValue(static_cast<double>(Color)), RValue(Alpha) });
-}
-
-// The switch that opens the page: the Slormite icon, with a shadow; larger and brighter under the mouse,
-// pressed in while the page is open, and blue then.
+// The switch that opens the page: the game's gold border with "Temple rush" inside, in the game's font. It lights up
+// under the mouse and while the page is open.
 static void DrawMIcon(const MouseState& M, double W, double H)
 {
     double x1, y1, x2, y2;
     IconRect(W, H, x1, y1, x2, y2);
-    const double cx = (x1 + x2) / 2.0, cy = (y1 + y2) / 2.0;
+    const double scale = UiScale(H);
+    const double sc = kIconDrawScale * scale;
 
     double hx1, hy1, hx2, hy2;
     IconHitRect(W, H, hx1, hy1, hx2, hy2);
     const bool hover = Inside(M, hx1, hy1, hx2, hy2);
+    const bool lit = hover || g_PageOpen;
 
-    const double scale = UiScale(H);
-    const double size = (x2 - x1) * (hover && !g_PageOpen ? 1.1 : 1.0);
-    const double depth = (g_PageOpen ? 2.0 : 5.0) * scale;
-    const double draw = size / 64.0;
-    const double x = cx - size / 2.0;
-    const double y = cy - size / 2.0 + (g_PageOpen ? 2.0 * scale : 0.0);
+    // Dark inside, then the frame (its origin is 12,12 in the sprite's pixels), then the text.
+    FillRect(x1 + 6.0 * sc, y1 + 6.0 * sc, x2 - 6.0 * sc, y2 - 6.0 * sc, 14, 12, 10, 1.0);
+    g_Yytk->CallBuiltin("draw_sprite_ext", { GAsset("spr_support_borders"), RValue(lit ? 1.0 : 0.0), RValue(x1 + kBorderOrigin * sc), RValue(y1 + kBorderOrigin * sc),
+        RValue(sc), RValue(sc), RValue(0.0), RValue(16777215.0), RValue(1.0) });
 
-    SlormiteFog(true, 0);
-    SlormiteDraw(x + depth * 0.6, y + depth, draw, 16777215, 0.5);
-    SlormiteFog(false, 0);
-
-    SlormiteGrey(hover ? 0.15 : 0.0);
-    SlormiteDraw(x, y, draw, 16777215, 1.0);
-    g_Yytk->CallBuiltin("shader_reset", {});
-
-    if (g_PageOpen)
-    {
-        SlormiteFog(true, kOpenBlue);
-        SlormiteDraw(x, y, draw, 16777215, 0.55);
-        SlormiteFog(false, 0);
-    }
+    const double cx = (x1 + x2) / 2.0, cy = (y1 + y2) / 2.0;
+    const char* color = lit ? "item_highlight" : "white";
+    GText(cx, cy - 9.0 * scale, "Temple", "ft_standard_11", color, 1);
+    GText(cx, cy + 9.0 * scale, "rush", "ft_standard_11", color, 1);
 }
 
 // Drawn inside the "Personnage" window's script, so the icon and the page are on top of the menu

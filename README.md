@@ -24,8 +24,8 @@ floor you already cleared gives no bonus. The game's executable is never changed
 
 ## Temple Floor Room Count (Juicy Slorm upgrade)
 
-Talk to the Juicy Slorm: a grey star (the Slormite icon, on the black square at the top left of the NPC's
-portrait) opens the TempleRush page, in the style of SlormReslormitizer's panel (the game's own frame, selector,
+Talk to the Juicy Slorm: the gold-framed **Temple rush** box on the black square at the top left of the NPC's
+portrait opens the TempleRush page, in the style of SlormReslormitizer's panel (the game's own frame, selector,
 buttons and fonts). It lists the mod's upgrades (more can be added later); click a row to select it, then **Buy**.
 The page has its own language selector (English / French).
 
@@ -53,10 +53,10 @@ The page has its own language selector (English / French).
 The price paid for each rank is recorded, so a later change of prices never costs you anything.
 Going down a rank gives the room back, from the next floor on.
 
-**On entering a floor**, a small box under the timer tells you what the upgrade did, for 8 seconds:
-"4 rooms instead of 6", "... (minimum reached)" or "no room removed, this floor is already at the minimum".
+**During a floor**, a line under the timer tells you what the upgrade did, for as long as you play it:
+"-2 rooms: 4 instead of 6", "... (minimum reached)" or "No room removed: already at the minimum".
 
-The **EN | FR** switch at the top left of the page changes its language (it is remembered; the first
+The **Language** selector at the top of the page changes its language (it is remembered; the first
 time it follows the language of Windows). Esc, the X button or a click outside the page closes it.
 
 The level is saved **per save slot** in `TempleRush_rooms.txt`, in the game folder (not in the game's own
@@ -64,24 +64,28 @@ save file). Copy that file along with your save if you move to another PC.
 
 ## Timer on screen
 
-During a Temple floor, a small panel at the top right of the screen (under the game's "Find the Shrine"
-line) shows the bonus you can still get and the time left for it, with a bar that empties. The countdown
-starts when the first monsters of the floor appear: until then the panel shows the full time, frozen.
+During a Temple floor, a frame like the title of an item appears at the top right of the screen, under the game's
+"Find the Shrine" line and its bar of Slorm to spend. It reads **NEXT FLOOR +N** and the time left to get that
+bonus. The border and the text change color with the bonus, like the rarity of an item: blue-grey for +2, gold
+for +3, orange for +4 and purple (Nether) for +5. The countdown starts when the first monsters of the floor appear:
+until then the frame shows the full time, frozen.
 
 The monsters appear room by room, so the countdown keeps running between rooms. In the **last room** (the
-one with the altar), as soon as the last monster is dead the countdown **freezes**: the panel turns green
-with "OK" and the bonus you reached is kept, so walking to the altar and picking up the Slorm costs you
-nothing. If monsters show up again, it goes on.
+one with the altar), as soon as the last monster is dead the countdown **freezes**: "OK" is added and the bonus you
+reached is kept, so walking to the altar and picking up the Slorm costs you nothing. If monsters show up again, it goes on.
 
-| Panel | Meaning |
+| Frame | Meaning |
 |-------|---------|
-| `+5  0:23` (gold) | 23 seconds left to clear the floor for +5 floors |
-| `+2  1:12` (blue) | 1 min 12 s left to clear the floor for +2 floors |
-| `+0  0:00` (grey) | too late, no bonus (disappears after 5 seconds) |
-| `+4  0:05  OK` (green) | last room cleared: the countdown is frozen and the bonus is kept |
-| `+1` (green) | after the clear: the bonus you got (shown for 6 seconds) |
+| `NEXT FLOOR +5  0:23` (purple) | 23 seconds left to clear the floor for +5 floors |
+| `NEXT FLOOR +2  1:12` (blue-grey) | 1 min 12 s left to clear the floor for +2 floors |
+| `NEXT FLOOR +0  0:00` (grey) | too late, no bonus (disappears after 5 seconds) |
+| `NEXT FLOOR +4  0:05 OK` (orange) | last room cleared: the countdown is frozen and the bonus is kept |
+| `NEXT FLOOR +3` | after the clear: the bonus you got (shown for 6 seconds) |
 
 It only shows in the Slorm Temple, not in the Battlefield or the Great Forge.
+
+**Boss floors.** The game has a boss every 50 floors (50, 100 and 150) and starts a run on your highest floor. A
+bonus never carries you past a boss floor: it stops one floor before, so you can play the boss and get its artifact.
 
 ## How it works
 
@@ -120,6 +124,13 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 **Release / x64**. The Aurie and YYToolkit v5.0.0c headers are in `include/`.
 
 ## Changelog
+
+### 1.3.1
+- The switch is now a gold-framed **Temple rush** box (the game's own frame and font) on the NPC's portrait, centered on it.
+- The page is more compact: the Slorm you own and the description of the upgrade sit on a dark red background, and the Pure Slorm icon follows the price and the refunds.
+- The timer is now a frame like the title of an item, with "NEXT FLOOR +N" and the time. The border and the text change color with the bonus: blue-grey +2, gold +3, orange +4, purple +5. It sits under the game's bar of Slorm to spend.
+- The message about the rooms removed stays on screen during the floor (it used to disappear after 8 seconds).
+- The time bonus no longer carries you past a boss floor (50, 100, 150): you land on the boss floor, so you can play it.
 
 ### 1.3.0
 - New page for the upgrade, in the style of SlormReslormitizer's panel (a mod by wistb): the game's own frame, selector, buttons and fonts. The switch is now its grey (blue when open) Slormite star on the NPC's portrait, instead of the M diamond.
