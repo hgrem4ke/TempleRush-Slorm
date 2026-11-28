@@ -53,8 +53,15 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --dir .
           ZIP=$(ls ./*.zip | head -n 1)
           VERSION="${TAG#v}"
-          # The "### <version>" block of the changelog in README.md, without its title.
-          awk -v v="### $VERSION" '$0==v {on=1; next} /^### / {on=0} on' README.md | sed '/^$/d' > changelog.txt
+          # The "### <version>" block of a README, as plain text lines: no markdown, "- " becomes a bullet.
+          block() {
+            awk -v v="### $VERSION" '$0==v {on=1; next} /^### / {on=0} on' "$1" | sed '/^$/d' \
+              | sed -e 's/\*\*//g' -e 's/`//g' -e 's/^- /• /'
+          }
+          {
+            echo "English"; echo "$VERSION"; block README.md
+            echo "Français"; echo "$VERSION"; block README_FR.md
+          } > changelog.txt
           echo "zip=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "--- changelog of $VERSION"; cat changelog.txt
