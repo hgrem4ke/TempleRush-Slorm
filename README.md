@@ -24,29 +24,34 @@ floor you already cleared gives no bonus. The game's executable is never changed
 
 ## Temple Floor Room Count (Juicy Slorm upgrade)
 
-Talk to the Juicy Slorm: a diamond marked **M** appears at the bottom right of the "Personnage" window.
-Click it to open the TempleRush page. It lists the mod's upgrades in the style of the game's own list
-(more can be added later); click a row to select it, then **Buy**.
+Talk to the Juicy Slorm: a grey star (the Slormite icon, on the black square at the top left of the NPC's
+portrait) opens the TempleRush page, in the style of SlormReslormitizer's panel (the game's own frame, selector,
+buttons and fonts). It lists the mod's upgrades (more can be added later); click a row to select it, then **Buy**.
+The page has its own language selector (English / French).
 
 **Temple Floor Room Count** removes rooms from every Slorm Temple floor:
 
-- each level is worth 0.1 room, and only whole rooms count: one room is removed every 10 levels, up to
-  5 rooms at level 50 (the maximum);
+- 10 ranks: each rank removes 1 room, so rank 10 (the maximum) removes 10 rooms;
 - a floor always keeps at least 3 rooms;
-- a level costs 50 x its number, in Pure Slorm.
+- each rank has its own price, in Pure Slorm (210,297 in total):
 
-| Level reached | Rooms removed | Cumulative cost (Pure Slorm) |
-|--------------:|--------------:|-----------------------------:|
-| 1 | 0 | 50 |
-| 10 | 1 | 2,750 |
-| 20 | 2 | 10,500 |
-| 30 | 3 | 23,250 |
-| 40 | 4 | 41,000 |
-| 50 | 5 | 63,750 |
+| Rank | Price (Pure Slorm) | Cumulative cost |
+|--:|--:|--:|
+| 1 | 921 | 921 |
+| 2 | 1,519 | 2,440 |
+| 3 | 2,506 | 4,946 |
+| 4 | 4,134 | 9,080 |
+| 5 | 6,820 | 15,900 |
+| 6 | 11,253 | 27,153 |
+| 7 | 18,566 | 45,719 |
+| 8 | 30,634 | 76,353 |
+| 9 | 50,545 | 126,898 |
+| 10 | 83,399 | 210,297 |
 
-**Refunds.** The same page has two more buttons: **Refund** gives back the last level (what it cost) and
-**Refund all** (click twice to confirm) removes every level and gives back all the Pure Slorm you spent.
-Going below a multiple of 10 levels removes that room again, from the next floor on.
+**Refunds.** The same page has two more buttons: **Refund** gives back the last rank (what you paid for it) and
+**Refund all** (click twice to confirm) removes every rank and gives back all the Pure Slorm you spent.
+The price paid for each rank is recorded, so a later change of prices never costs you anything.
+Going down a rank gives the room back, from the next floor on.
 
 **On entering a floor**, a small box under the timer tells you what the upgrade did, for 8 seconds:
 "4 rooms instead of 6", "... (minimum reached)" or "no room removed, this floor is already at the minimum".
@@ -115,6 +120,12 @@ Visual Studio 2022 or newer, with "Desktop development with C++". Open `TempleRu
 **Release / x64**. The Aurie and YYToolkit v5.0.0c headers are in `include/`.
 
 ## Changelog
+
+### 1.3.0
+- New page for the upgrade, in the style of SlormReslormitizer's panel (a mod by wistb): the game's own frame, selector, buttons and fonts. The switch is now its grey (blue when open) Slormite star on the NPC's portrait, instead of the M diamond.
+- "Temple Floor Room Count" now has 10 ranks of 1 room each (up to -10 rooms) with new prices (210,297 Pure Slorm in total), instead of 50 levels of 0.1 room.
+- Nothing you invested is lost: the price paid for each rank is recorded and refunded as paid, and **Refund all** works even at rank 0. Old levels are converted (the same whole rooms stay removed), and the levels that do not make a whole rank are refunded automatically, once.
+- The portal's destination after a record with a bonus was already fixed in 1.2.4.
 
 ### 1.2.4
 - Fixed the portal: after a new record with a time bonus, it now takes you to the floor you cleared + 1 + the bonus (it used to send you to the next floor only, especially on the first floor after starting the game).

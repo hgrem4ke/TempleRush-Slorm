@@ -24,6 +24,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -246,6 +247,8 @@ static void ApplyPendingJump()
         g_Yytk->CallBuiltin("variable_global_set", { "next_floor_jump", RValue(wanted) });
 }
 
+static CInstance* g_DrawSelf = nullptr;     // an instance of the game's UI, to run the game's text scripts
+
 static void RunRoomUi();
 static void DrawPageIfOpen(int Tag);
 static void DrawRoomNotice();
@@ -327,6 +330,7 @@ static void CodeEventCallback(FWCodeEvent& Context)
     {
         if (!Context.CalledOriginal())
             Context.Call();
+        g_DrawSelf = std::get<0>(Context.Arguments());
         DrawPageIfOpen(1);
         return;
     }
@@ -460,6 +464,7 @@ static RValue& HudDrawHook(
     RValue& ret = g_OriginalHud(Self, Other, Result, ArgumentCount, Arguments);
     DrawTimer();
     DrawRoomNotice();
+    g_DrawSelf = Self;
     DrawPageIfOpen(2);
     return ret;
 }
@@ -569,14 +574,18 @@ static RValue& FloorEndHook(
 
 // ============================================================
 // Shorter floors: the Juicy Slorm upgrade "Temple Floor Room Count".
-// Each level is worth 0.1 room, and only whole rooms count: 10 levels remove 1 room, 50 levels remove 5.
+// Ten ranks: each one removes 1 room, so rank 10 (the maximum) removes 10 rooms. The price of each rank is in
+// kRankPrices (210,297 Pure Slorm in total). The price PAID for each rank is recorded (paid_<slot> in the save
+// file) and refunded as paid, so a change of prices in a new version never costs a player anything.
 // ============================================================
 
-static constexpr int    kRoomUpgradeMaxLevel = 50;
-static constexpr double kRoomsPerLevel = 0.1;
+static constexpr int    kRoomUpgradeMaxLevel = 10;
+static constexpr double kRoomsPerLevel = 1.0;
+static constexpr double kRankPrices[kRoomUpgradeMaxLevel] = { 921, 1519, 2506, 4134, 6820, 11253, 18566, 30634, 50545, 83399 };
 static constexpr size_t kMinRoomsKept = 3;
 
 static int g_RoomUpgradeLevel = 0;
+static std::vector<double> g_RoomPaid;   // price paid for each rank of the current slot, in order
 static double g_RoomSpent = 0.0;     // Pure Slorm spent on the levels of the current slot
 
 // Notice shown when a floor starts: how many rooms it has, and how many it would have had.
@@ -665,7 +674,6 @@ static RValue& GenBspHook(
 
 static constexpr const char* kRoomSaveFile = "TempleRush_rooms.txt";
 static constexpr const char* kCurrencyVar = "pure_slorm";
-static constexpr double kPriceBase = 50.0;            // price of the next level = kPriceBase * (level + 1)
 
 static bool g_French = false;
 
@@ -675,6 +683,8 @@ static bool g_French = false;
 //   spent_<slot>=<Pure Slorm spent on those levels>   (what a refund gives back)
 static std::map<int, int> g_SlotLevels;
 static std::map<int, double> g_SlotSpent;
+static std::map<int, std::vector<double>> g_SlotPaid;
+static std::map<int, double> g_SlotRefund;     // Pure Slorm to give back once: old levels that do not make a whole rank
 static int g_CurrentSlot = -1;
 
 static int ReadSaveSlot()
@@ -688,6 +698,7 @@ static void LoadRoomLevel()
 {
     std::ifstream file(kRoomSaveFile);
     std::string line;
+    int version = 1;            // files before 1.3.0 have no version: their levels were 0.1 room each (up to 50)
     while (std::getline(file, line))
     {
         const size_t eq = line.find('=');
@@ -698,10 +709,59 @@ static void LoadRoomLevel()
         const int value = std::atoi(line.c_str() + eq + 1);
         if (key == "language")
             g_French = (value == 1);
+        else if (key == "version")
+            version = value;
         else if (key.rfind("level_", 0) == 0)
-            g_SlotLevels[std::atoi(key.c_str() + 6)] = value < 0 ? 0 : (value > kRoomUpgradeMaxLevel ? kRoomUpgradeMaxLevel : value);
+            g_SlotLevels[std::atoi(key.c_str() + 6)] = value < 0 ? 0 : value;
+        else if (key.rfind("paid_", 0) == 0)
+        {
+            std::vector<double> list;
+            const char* at = line.c_str() + eq + 1;
+            while (*at)
+            {
+                char* end = nullptr;
+                const double value = std::strtod(at, &end);
+                if (end == at)
+                    break;
+                list.push_back(value);
+                at = (*end == ',') ? end + 1 : end;
+                if (end == at && *end)
+                    break;
+            }
+            g_SlotPaid[std::atoi(key.c_str() + 5)] = list;
+        }
+        else if (key.rfind("refund_", 0) == 0)
+            g_SlotRefund[std::atoi(key.c_str() + 7)] = std::atof(line.c_str() + eq + 1);
         else if (key.rfind("spent_", 0) == 0)
             g_SlotSpent[std::atoi(key.c_str() + 6)] = std::atof(line.c_str() + eq + 1);
+    }
+
+    // RULE for every update: what a player invested is never lost. The Pure Slorm spent are recorded per save
+    // (spent_<slot>) and "Refund all" always gives them back, whatever the prices or levels of the new version.
+    // Old levels (0.1 room each) become ranks (1 room each): the same whole rooms are removed, and the Slorm
+    // already spent stay recorded.
+    // The levels that do not make a whole rank (level 7 = 0 whole rooms) are refunded at their old price (50 x level).
+    for (auto& kv : g_SlotLevels)
+    {
+        if (version < 2)
+        {
+            const int old = kv.second;
+            const int lost = old % 10;
+            double lostCost = 0.0;
+            for (int k = old - lost + 1; k <= old; k++)
+                lostCost += 50.0 * k;
+            if (lostCost > 0.0)
+            {
+                g_SlotRefund[kv.first] += lostCost;
+                const auto spent = g_SlotSpent.find(kv.first);
+                if (spent != g_SlotSpent.end())
+                    spent->second = spent->second > lostCost ? spent->second - lostCost : 0.0;
+            }
+            kv.second = old / 10;
+            g_SlotPaid.erase(kv.first);
+        }
+        if (kv.second > kRoomUpgradeMaxLevel)
+            kv.second = kRoomUpgradeMaxLevel;
     }
 }
 
@@ -711,9 +771,11 @@ static void SaveRoomLevel()
     {
         g_SlotLevels[g_CurrentSlot] = g_RoomUpgradeLevel;
         g_SlotSpent[g_CurrentSlot] = g_RoomSpent;
+        g_SlotPaid[g_CurrentSlot] = g_RoomPaid;
     }
 
     std::ofstream file(kRoomSaveFile, std::ios::trunc);
+    file << "version=2" << std::endl;
     file << "language=" << (g_French ? 1 : 0) << std::endl;
     for (const auto& kv : g_SlotLevels)
     {
@@ -721,6 +783,17 @@ static void SaveRoomLevel()
         const auto spent = g_SlotSpent.find(kv.first);
         if (spent != g_SlotSpent.end())
             file << "spent_" << kv.first << "=" << static_cast<long long>(spent->second) << std::endl;
+        const auto paid = g_SlotPaid.find(kv.first);
+        if (paid != g_SlotPaid.end() && !paid->second.empty())
+        {
+            file << "paid_" << kv.first << "=";
+            for (size_t i = 0; i < paid->second.size(); i++)
+                file << (i ? "," : "") << static_cast<long long>(paid->second[i]);
+            file << std::endl;
+        }
+        const auto refund = g_SlotRefund.find(kv.first);
+        if (refund != g_SlotRefund.end() && refund->second > 0.0)
+            file << "refund_" << kv.first << "=" << static_cast<long long>(refund->second) << std::endl;
     }
 }
 
@@ -735,21 +808,26 @@ static void SyncSaveSlot()
     {
         g_SlotLevels[g_CurrentSlot] = g_RoomUpgradeLevel;
         g_SlotSpent[g_CurrentSlot] = g_RoomSpent;
+        g_SlotPaid[g_CurrentSlot] = g_RoomPaid;
     }
 
     g_CurrentSlot = slot;
+    const auto paidList = g_SlotPaid.find(slot);
+    g_RoomPaid = (paidList != g_SlotPaid.end()) ? paidList->second : std::vector<double>();
     const auto it = g_SlotLevels.find(slot);
     g_RoomUpgradeLevel = (it != g_SlotLevels.end()) ? it->second : 0;
 
-    // A level saved without its cost (older file): assume it was bought at the normal price.
+    // A rank saved without its cost (older file): assume it was bought at the normal price.
     const auto spent = g_SlotSpent.find(slot);
-    g_RoomSpent = (spent != g_SlotSpent.end()) ? spent->second
-                                               : kPriceBase * g_RoomUpgradeLevel * (g_RoomUpgradeLevel + 1) / 2.0;
+    double table = 0.0;
+    for (int i = 0; i < g_RoomUpgradeLevel && i < kRoomUpgradeMaxLevel; i++)
+        table += kRankPrices[i];
+    g_RoomSpent = (spent != g_SlotSpent.end()) ? spent->second : table;
 }
 
 static double RoomPrice()
 {
-    return kPriceBase * (g_RoomUpgradeLevel + 1);
+    return g_RoomUpgradeLevel < kRoomUpgradeMaxLevel ? kRankPrices[g_RoomUpgradeLevel] : 0.0;
 }
 
 static const char* Tr(const char* English, const char* French)
@@ -819,6 +897,10 @@ static bool BuyRoomLevel()
     g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold - price) });
     g_RoomUpgradeLevel++;
     g_RoomSpent += price;
+    if (g_RoomPaid.size() + 1 == static_cast<size_t>(g_RoomUpgradeLevel))
+        g_RoomPaid.push_back(price);
+    else
+        g_RoomPaid.clear();     // the list does not match the ranks (old save): the table is used for refunds
     SaveRoomLevel();
     return true;
 }
@@ -829,7 +911,9 @@ static double RoomRefundOneValue()
     SyncSaveSlot();
     if (g_RoomUpgradeLevel <= 0)
         return 0.0;
-    const double cost = kPriceBase * g_RoomUpgradeLevel;
+    double cost = kRankPrices[(g_RoomUpgradeLevel > kRoomUpgradeMaxLevel ? kRoomUpgradeMaxLevel : g_RoomUpgradeLevel) - 1];
+    if (g_RoomPaid.size() == static_cast<size_t>(g_RoomUpgradeLevel))
+        cost = g_RoomPaid.back();       // what this rank really cost, even if prices changed since
     return cost < g_RoomSpent ? cost : g_RoomSpent;
 }
 
@@ -842,6 +926,8 @@ static bool RoomRefundOne()
     const double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
     g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold + value) });
     g_RoomUpgradeLevel--;
+    if (!g_RoomPaid.empty())
+        g_RoomPaid.pop_back();
     g_RoomSpent -= value;
     if (g_RoomSpent < 0.0 || g_RoomUpgradeLevel == 0)
         g_RoomSpent = 0.0;
@@ -853,19 +939,20 @@ static bool RoomRefundOne()
 static double RoomRefundAllValue()
 {
     SyncSaveSlot();
-    return g_RoomUpgradeLevel > 0 ? g_RoomSpent : 0.0;
+    return g_RoomSpent > 0.0 ? g_RoomSpent : 0.0;
 }
 
 static bool RoomRefundAll()
 {
     SyncSaveSlot();
-    if (g_RoomUpgradeLevel <= 0)
+    if (g_RoomUpgradeLevel <= 0 && g_RoomSpent <= 0.0)
         return false;
 
     const double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
     g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold + g_RoomSpent) });
     g_RoomUpgradeLevel = 0;
     g_RoomSpent = 0.0;
+    g_RoomPaid.clear();
     SaveRoomLevel();
     return true;
 }
@@ -942,11 +1029,14 @@ static bool Inside(const MouseState& M, double X1, double Y1, double X2, double 
 // The "M" icon in the Juicy Slorm's window, and the page it opens.
 // ------------------------------------------------------------
 
-// The M icon sits in the bottom bar of the "Personnage" window, bottom left, next to the "?" button.
-// Position as a fraction of the screen. It is drawn on the screen itself, after the game's menu.
-static constexpr double kIconCenterX = 0.1720;
-static constexpr double kIconCenterY = 0.9290;
-static constexpr double kIconSize = 0.046;     // fraction of the screen height
+// The switch is the Slormite icon of SlormReslormitizer's panel (a mod by wistb, AGPL-3.0): grey, blue while the
+// page is open. It sits on the black square at the top left of the NPC's portrait. Position and size are in the
+// game's 1920x1080 layout, scaled by its UI scale.
+static constexpr double kIconCenterXUnits = 202.0;
+static constexpr double kIconCenterYUnits = 184.0;
+static constexpr double kIconSizeUnits = 48.0;
+static constexpr int kSlormiteFrame = 205;      // in spr_inventory_items
+static constexpr int kOpenBlue = 0xff9030;      // BGR
 
 static PFUNC_YYGMLScript g_OrigPanel = nullptr;      // scr_mage_panel_upgrades: drawn while the NPC's list is shown
 static PFUNC_YYGMLScript g_OrigInventory = nullptr;  // scr_ui_menus_inventory: draws the "Personnage" window
@@ -1059,12 +1149,12 @@ static int RoomsLevel() { return g_RoomUpgradeLevel; }
 static int RoomsMaxLevel() { return kRoomUpgradeMaxLevel; }
 static void RoomsValue(char* Out, size_t Size)
 {
-    std::snprintf(Out, Size, "(-%.1f)", g_RoomUpgradeLevel * kRoomsPerLevel);
+    std::snprintf(Out, Size, "(-%d)", static_cast<int>(g_RoomUpgradeLevel * kRoomsPerLevel));
 }
 
 static const UpgradeDef kUpgrades[] = {
-    { "-0.1 Temple Floor Room Count",
-      "-0,1 Pi" FR_E_GRAVE "ce par " FR_E_ACUTE "tage du Temple",
+    { "-1 Temple Floor Room Count",
+      "-1 Pi" FR_E_GRAVE "ce par " FR_E_ACUTE "tage du Temple",
       "Reduces the total number of rooms to reach end of floor in The Slorm Temple.",
       "R" FR_E_ACUTE "duit le nombre total de pi" FR_E_GRAVE "ces pour atteindre la fin d'un " FR_E_ACUTE "tage du Temple du Slorm.",
       RoomsLevel, RoomsMaxLevel, RoomPrice, BuyRoomLevel,
@@ -1073,16 +1163,27 @@ static const UpgradeDef kUpgrades[] = {
 static constexpr int kUpgradeCount = static_cast<int>(sizeof(kUpgrades) / sizeof(kUpgrades[0]));
 static int g_SelectedUpgrade = 0;
 
-// Page layout, in units of one 1080th of the screen height (so it scales with the resolution).
+// ------------------------------------------------------------
+// The page, in the style of SlormReslormitizer's panel (a mod by wistb, AGPL-3.0, on Nexus Mods): the game's own
+// sprites and fonts, laid out on the game's 1920x1080 grid and scaled by the game's UI scale.
+// ------------------------------------------------------------
+
+// Sizes in layout units (one unit = UI scale pixels).
+static constexpr double kPW = 570.0;        // panel width
+static constexpr double kPH = 450.0;        // panel height
+static constexpr double kPad = 30.0;
+static constexpr double kRow = 38.0;
+static constexpr double kArrowW = 24.0, kArrowH = 36.0, kBoxW = 220.0;
+static constexpr double kBtnW = 156.0, kBtnH = 52.0, kBtnSpriteW = 168.0;
+static constexpr double kLangY = 100.0;
+static constexpr double kButtonsY = 336.0;
+
 struct PageLayout
 {
-    double u;
-    double left, top, right, bottom, cx;
-    double headerL, headerT, headerR, headerB;
-    double pillL, pillT, pillR, pillB;
+    double s;                               // pixels per unit
+    double left, top, right, bottom;
     double rowsTop, rowHeight, rowGap;
-    double tipL, tipT, tipR, tipB;
-    double panelL, panelT, panelR, panelB;
+    double headerL, headerR;
     double buyL, buyT, buyR, buyB;
     double refL, refT, refR, refB;
     double allL, allT, allR, allB;
@@ -1090,53 +1191,50 @@ struct PageLayout
     double langL, langT, langR, langB;
 };
 
+static double UiScale(double H)
+{
+    RValue ui = g_Yytk->CallBuiltin("instance_find", { g_Yytk->CallBuiltin("asset_get_index", { "obj_ui_next_gen" }), RValue(0.0) });
+    if (IsTrue(g_Yytk->CallBuiltin("variable_instance_exists", { ui, "ui_scale" })))
+    {
+        const double value = ReadNumber(g_Yytk->CallBuiltin("variable_instance_get", { ui, "ui_scale" }));
+        if (value > 0.0)
+            return value;
+    }
+    return H / 1080.0;
+}
+
 static PageLayout GetPageLayout(double W, double H)
 {
     PageLayout l;
-    const double u = H / 1080.0;
-    l.u = u;
-    l.rowHeight = 62.0 * u;
-    l.rowGap = 8.0 * u;
+    const double s = UiScale(H);
+    l.s = s;
+    l.left = (W - kPW * s) / 2.0;
+    l.top = (H - kPH * s) / 2.0;
+    l.right = l.left + kPW * s;
+    l.bottom = l.top + kPH * s;
 
-    const double width = 760.0 * u;
-    const double rowsHeight = kUpgradeCount * (l.rowHeight + l.rowGap);
-    const double height = (410.0 * u) + rowsHeight;
+    auto X = [&](double U) { return l.left + U * s; };
+    auto Y = [&](double U) { return l.top + U * s; };
 
-    l.left = (W - width) / 2.0;
-    l.right = l.left + width;
-    l.top = (H - height) / 2.0;
-    l.bottom = l.top + height;
-    l.cx = (l.left + l.right) / 2.0;
+    l.closeL = X(kPW - 74.0); l.closeT = Y(20.0); l.closeR = l.closeL + 52.0 * s; l.closeB = l.closeT + 52.0 * s;
 
-    double y = l.top + 24.0 * u;
-    l.headerL = l.left + 24.0 * u; l.headerR = l.right - 24.0 * u;
-    l.headerT = y; l.headerB = y + 56.0 * u;
-    l.closeR = l.headerR - 6.0 * u; l.closeL = l.closeR - 44.0 * u;
-    l.closeT = l.headerT + 6.0 * u; l.closeB = l.closeT + 44.0 * u;
-    l.langL = l.headerL + 6.0 * u; l.langR = l.langL + 96.0 * u;
-    l.langT = l.closeT; l.langB = l.closeB;
+    const double right = kPW - kPad;
+    const double langTop = kLangY + (kRow - kArrowH) / 2.0;
+    l.langL = X(right - kArrowW - 4.0 - kBoxW - 4.0 - kArrowW); l.langR = X(right);
+    l.langT = Y(langTop); l.langB = Y(langTop + kArrowH);
 
-    y = l.headerB + 14.0 * u;
-    l.pillL = l.cx - 130.0 * u; l.pillR = l.cx + 130.0 * u;
-    l.pillT = y; l.pillB = y + 48.0 * u;
+    l.rowsTop = Y(kLangY + kRow);
+    l.rowHeight = kRow * s;
+    l.rowGap = 0.0;
+    l.headerL = X(kPad);
+    l.headerR = X(kPW - kPad);
 
-    y = l.pillB + 18.0 * u;
-    l.rowsTop = y;
-    y += rowsHeight + 6.0 * u;
-
-    l.tipL = l.headerL; l.tipR = l.headerR;
-    l.tipT = y; l.tipB = y + 90.0 * u;
-
-    y = l.tipB + 14.0 * u;
-    l.panelL = l.headerL; l.panelR = l.headerR;
-    l.panelT = y; l.panelB = y + 120.0 * u;
-
-    // Three buttons side by side: Buy, Refund (last level), Refund all.
-    l.buyT = l.refT = l.allT = l.panelT + 54.0 * u;
-    l.buyB = l.refB = l.allB = l.buyT + 56.0 * u;
-    l.buyL = l.cx - 340.0 * u; l.buyR = l.cx - 120.0 * u;
-    l.refL = l.cx - 110.0 * u; l.refR = l.cx + 110.0 * u;
-    l.allL = l.cx + 120.0 * u; l.allR = l.cx + 340.0 * u;
+    const double gap = (kPW - 2.0 * kPad - 3.0 * kBtnW) / 2.0;
+    l.buyL = X(kPad);                         l.buyR = l.buyL + kBtnW * s;
+    l.refL = X(kPad + kBtnW + gap);           l.refR = l.refL + kBtnW * s;
+    l.allL = X(kPad + (kBtnW + gap) * 2.0);   l.allR = l.allL + kBtnW * s;
+    l.buyT = l.refT = l.allT = Y(kButtonsY);
+    l.buyB = l.refB = l.allB = Y(kButtonsY + kBtnH);
     return l;
 }
 
@@ -1144,15 +1242,18 @@ static void RowRect(const PageLayout& L, int Index, double& X1, double& Y1, doub
 {
     X1 = L.headerL;
     X2 = L.headerR;
-    Y1 = L.rowsTop + Index * (L.rowHeight + L.rowGap);
+    Y1 = L.rowsTop + Index * L.rowHeight;
     Y2 = Y1 + L.rowHeight;
 }
 
 static void IconRect(double W, double H, double& X1, double& Y1, double& X2, double& Y2)
 {
-    const double size = kIconSize * H;
-    X1 = kIconCenterX * W - size / 2.0;
-    Y1 = kIconCenterY * H - size / 2.0;
+    const double scale = UiScale(H);
+    const double size = kIconSizeUnits * scale;
+    const double cx = (W - 1920.0 * scale) / 2.0 + kIconCenterXUnits * scale;
+    const double cy = (H - 1080.0 * scale) / 2.0 + kIconCenterYUnits * scale;
+    X1 = cx - size / 2.0;
+    Y1 = cy - size / 2.0;
     X2 = X1 + size;
     Y2 = Y1 + size;
 }
@@ -1203,96 +1304,176 @@ static void PageText(double X, double Y, const char* Text, double Scale)
     GmText(X, Y, Text, Scale * kPageTextScale);
 }
 
-// The small white drop used by the game for Slorm amounts.
-static void DrawSlormDrop(double X, double Y, double Radius)
+// --- The game's scripts for text, and sprites
+
+static PFUNC_YYGMLScript FindGameScript(const char* Name)
 {
-    GmColor(235, 245, 255);
-    g_Yytk->CallBuiltin("draw_circle", { RValue(X), RValue(Y), RValue(Radius), RValue(0.0) });
+    CScript* script = nullptr;
+    if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(Name, reinterpret_cast<PVOID*>(&script))) || !script || !script->m_Functions)
+        return nullptr;
+    return script->m_Functions->m_ScriptFunction;
 }
 
-static void DrawActionButton(const MouseState& M, double U, double L, double T, double R, double B, const char* Label, bool Enabled)
+static RValue RunGameScript(PFUNC_YYGMLScript Function, std::initializer_list<RValue> Arguments)
 {
-    const bool hover = Enabled && Inside(M, L, T, R, B);
-    FillRect(L, T, R, B, hover ? 40 : 24, hover ? 32 : 20, hover ? 30 : 20);
-    FrameRect(L, T, R, B, 3.0 * U, Enabled ? 110 : 60, Enabled ? 90 : 55, Enabled ? 80 : 50);
-    // The red diamonds at both ends, like the game's button.
-    const double d = 12.0 * U, my = (T + B) / 2.0;
-    FillRect(L + 14.0 * U - d / 2.0, my - d / 2.0, L + 14.0 * U + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
-    FillRect(R - 14.0 * U - d / 2.0, my - d / 2.0, R - 14.0 * U + d / 2.0, my + d / 2.0, Enabled ? 200 : 80, Enabled ? 70 : 40, Enabled ? 30 : 30);
-
-    GmAlign(1, 1);
-    GmColor(Enabled ? 255 : 130, Enabled ? 255 : 130, Enabled ? 255 : 130);
-    PageText((L + R) / 2.0, my, Label, (U * 1080.0 / 900.0) * 1.0);
-    GmAlign(0, 0);
+    RValue result;
+    if (!Function || !g_DrawSelf)
+        return result;
+    std::vector<RValue> values(Arguments);
+    std::vector<RValue*> pointers;
+    for (RValue& value : values)
+        pointers.push_back(&value);
+    Function(g_DrawSelf, g_DrawSelf, result, static_cast<int>(pointers.size()), pointers.data());
+    return result;
 }
 
-// An amount of Slorm in a dark box above a button, with the game's drop: "Prefix" is "" or "+".
-static void DrawAmountBox(double U, double L, double R, double Top, const char* Prefix, double Amount, int Cr, int Cg, int Cb)
+// Text as the game draws it: fonts and colors by name, sized by the game for its UI scale. Align: 0 left,
+// 1 centered, 2 right; Y is the middle of the line.
+static void GText(double X, double Y, const char* Content, const char* Font = "ft_standard_12", const char* Color = "white", int Align = 0)
 {
-    FillRect(L, Top, R, Top + 36.0 * U, 20, 8, 8);
-    char text[48];
-    std::snprintf(text, sizeof(text), "%s%.0f", Prefix, Amount);
-    const double ts = (U * 1080.0 / 900.0);
-    const double w = TextWidth(text, ts * 1.0);
-    const double x = (L + R) / 2.0 - (w + 26.0 * U) / 2.0;
-    GmAlign(0, 1);
-    GmColor(Cr, Cg, Cb);
-    PageText(x, Top + 18.0 * U, text, ts * 1.0);
-    DrawSlormDrop(x + w + 16.0 * U, Top + 18.0 * U, 7.0 * U);
+    static PFUNC_YYGMLScript drawText = FindGameScript("gml_Script_scr_draw_text");
+    RunGameScript(drawText, { RValue(X), RValue(Y), RValue(Content), RValue(1.0), RValue(1.0), RValue(Font), RValue(static_cast<double>(Align)),
+        RValue(1.0), RValue(0.0), RValue(1.0), RValue(Color), RValue("black"), RValue(1.0), RValue(false) });
+}
+
+// Width and height of text as the game draws it, in layout units.
+static double GTextWidth(const char* Content, const char* Font, double S)
+{
+    static PFUNC_YYGMLScript stringWidth = FindGameScript("gml_Script_scr_string_width");
+    return ReadNumber(RunGameScript(stringWidth, { RValue(Content), RValue(Font) })) / S;
+}
+
+static double GTextHeight(const char* Font, double S)
+{
+    static PFUNC_YYGMLScript stringHeight = FindGameScript("gml_Script_scr_string_height");
+    return ReadNumber(RunGameScript(stringHeight, { RValue("Ag"), RValue(Font) })) / S;
+}
+
+static RValue GAsset(const char* Name)
+{
+    static std::map<std::string, double> known;
+    auto found = known.find(Name);
+    if (found == known.end())
+        found = known.emplace(Name, ReadNumber(g_Yytk->CallBuiltin("asset_get_index", { Name }))).first;
+    return RValue(found->second);
+}
+
+static void GSprite(const char* Name, int Frame, double X, double Y, double Scale)
+{
+    g_Yytk->CallBuiltin("draw_sprite_ext", { GAsset(Name), RValue(static_cast<double>(Frame)), RValue(X), RValue(Y),
+        RValue(Scale), RValue(Scale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+}
+
+// A part of a sprite (in its own pixels) drawn at X, Y and stretched to Width x Height pixels.
+static void GSpritePart(const char* Name, int Frame, double SL, double ST, double SW, double SH, double X, double Y, double Width, double Height)
+{
+    g_Yytk->CallBuiltin("draw_sprite_part_ext", { GAsset(Name), RValue(static_cast<double>(Frame)), RValue(SL), RValue(ST), RValue(SW), RValue(SH),
+        RValue(X), RValue(Y), RValue(Width / SW), RValue(Height / SH), RValue(16777215.0), RValue(1.0) });
+}
+
+static void GRect(double X1, double Y1, double X2, double Y2, int Color)
+{
+    g_Yytk->CallBuiltin("draw_set_color", { RValue(static_cast<double>(Color)) });
+    g_Yytk->CallBuiltin("draw_rectangle", { RValue(X1), RValue(Y1), RValue(X2), RValue(Y2), RValue(false) });
+    g_Yytk->CallBuiltin("draw_set_color", { RValue(16777215.0) });
+}
+
+// The frame of the character page's weapon box, stretched over the panel: its corners, plain strips of its
+// edges and inside, and the skull ornament on top. In the sprite's pixels (419 by 304).
+static void DrawGameFrame(const PageLayout& L)
+{
+    const char* box = "spr_weapon_box_inventory_v2";
+    constexpr double SW = 419, SH = 304, CW = 80, CH = 84;
+    const double s = L.s;
+    const double x1 = L.left, y1 = L.top, x2 = L.right, y2 = L.bottom, w = x2 - x1, h = y2 - y1;
+    GRect(x1 + 4 * s, y1 + 17 * s, x2 - 4 * s, y2 - 6 * s, 0x0b0b0b);
+    GSpritePart(box, 0, 100, 100, 10, 10, x1 + CW * s, y1 + CH * s, w - CW * s * 2, h - CH * s * 2);
+    GSpritePart(box, 0, 72, 0, 8, CH, x1 + CW * s, y1, w - CW * s * 2, CH * s);
+    GSpritePart(box, 0, 150, SH - CH, 10, CH, x1 + CW * s, y2 - CH * s, w - CW * s * 2, CH * s);
+    GSpritePart(box, 0, 0, CH, CW, 10, x1, y1 + CH * s, CW * s, h - CH * s * 2);
+    GSpritePart(box, 0, SW - CW, CH, CW, 10, x2 - CW * s, y1 + CH * s, CW * s, h - CH * s * 2);
+    GSpritePart(box, 0, 0, 0, CW, CH, x1, y1, CW * s, CH * s);
+    GSpritePart(box, 0, SW - CW, 0, CW, CH, x2 - CW * s, y1, CW * s, CH * s);
+    GSpritePart(box, 0, 0, SH - CH, CW, CH, x1, y2 - CH * s, CW * s, CH * s);
+    GSpritePart(box, 0, SW - CW, SH - CH, CW, CH, x2 - CW * s, y2 - CH * s, CW * s, CH * s);
+    constexpr double OL = 82, OW = 255, OH = 60;
+    GSpritePart(box, 0, OL, 0, OW, OH, (x1 + x2 - OW * s) / 2.0, y1, OW * s, OH * s);
+}
+
+static int HoverFrame(bool Over, bool Down)
+{
+    return Over ? (Down ? 2 : 1) : 0;
+}
+
+// The game's grey button: its two ends, narrowed.
+static void GButton(const MouseState& M, const PageLayout& L, double X1, double Y1, double X2, double Y2, const char* Label, bool Enabled)
+{
+    const bool over = Enabled && Inside(M, X1, Y1, X2, Y2);
+    const double s = L.s;
+    const double half = (kBtnW / 2.0);
+    const int frame = Enabled ? HoverFrame(over, false) : 0;
+    GSpritePart("spr_menu_grey_button", frame, 0, 0, half, kBtnH, X1, Y1, half * s, kBtnH * s);
+    GSpritePart("spr_menu_grey_button", frame, kBtnSpriteW - half, 0, half, kBtnH, X1 + half * s, Y1, half * s, kBtnH * s);
+    GText((X1 + X2) / 2.0, (Y1 + Y2) / 2.0, Label, "ft_standard_12", Enabled ? "white" : "grey", 1);
+}
+
+// Text broken at spaces into lines no wider than Width (layout units).
+static std::vector<std::string> WrapText(const std::string& Content, const char* Font, double Width, double S)
+{
+    std::vector<std::string> lines;
+    std::string line, word;
+    std::istringstream words(Content);
+    while (words >> word)
+    {
+        const std::string longer = line.empty() ? word : line + " " + word;
+        if (!line.empty() && GTextWidth(longer.c_str(), Font, S) > Width)
+        {
+            lines.push_back(line);
+            line = word;
+        }
+        else
+            line = longer;
+    }
+    if (!line.empty())
+        lines.push_back(line);
+    return lines;
 }
 
 static void DrawRoomPage(const MouseState& M, double W, double H)
 {
     const PageLayout L = GetPageLayout(W, H);
-    const double u = L.u;
-    const double ts = H / 900.0;
+    const double s = L.s;
     char text[200];
 
+    auto X = [&](double U) { return L.left + U * s; };
+    auto Y = [&](double U) { return L.top + U * s; };
+    const double R = kPW - kPad;
+
+    // The game stays visible, darkened, behind the panel.
     FillRect(0, 0, W, H, 0, 0, 0, 0.55);
+    DrawGameFrame(L);
 
-    // Window.
-    FillRect(L.left, L.top, L.right, L.bottom, 16, 10, 10, 0.98);
-    FrameRect(L.left, L.top, L.right, L.bottom, 4.0 * u, 74, 52, 38);
-    FrameRect(L.left + 6.0 * u, L.top + 6.0 * u, L.right - 6.0 * u, L.bottom - 6.0 * u, 2.0 * u, 36, 24, 20);
-
-    // Title bar and close button.
-    FillRect(L.headerL, L.headerT, L.headerR, L.headerB, 88, 26, 20);
-    FrameRect(L.headerL, L.headerT, L.headerR, L.headerB, 2.0 * u, 52, 16, 12);
-    GmAlign(1, 1);
-    GmColor(160, 118, 56);
-    PageText(L.cx, (L.headerT + L.headerB) / 2.0, "TEMPLE RUSH", ts * 1.35);
-
-    // Language switch (EN | FR), like the mods menu's.
-    const bool overLang = Inside(M, L.langL, L.langT, L.langR, L.langB);
-    FillRect(L.langL, L.langT, L.langR, L.langB, overLang ? 70 : 40, 16, 14);
-    FrameRect(L.langL, L.langT, L.langR, L.langB, 2.0 * u, 120, 44, 28);
-    GmAlign(1, 1);
-    GmColor(g_French ? 140 : 255, g_French ? 120 : 200, g_French ? 100 : 90);
-    PageText(L.langL + (L.langR - L.langL) * 0.27, (L.langT + L.langB) / 2.0, "EN", ts * 1.1);
-    GmColor(150, 120, 100);
-    PageText((L.langL + L.langR) / 2.0, (L.langT + L.langB) / 2.0, "|", ts * 1.1);
-    GmColor(g_French ? 255 : 140, g_French ? 200 : 120, g_French ? 90 : 100);
-    PageText(L.langL + (L.langR - L.langL) * 0.73, (L.langT + L.langB) / 2.0, "FR", ts * 1.1);
-
+    // Title, under the frame's ornament, and the close button.
+    GText(X(kPad), Y(73.0), "TempleRush", "ft_standard_16");
     const bool overClose = Inside(M, L.closeL, L.closeT, L.closeR, L.closeB);
-    FillRect(L.closeL, L.closeT, L.closeR, L.closeB, overClose ? 70 : 40, 16, 14);
-    FrameRect(L.closeL, L.closeT, L.closeR, L.closeB, 2.0 * u, 120, 44, 28);
-    GmColor(overClose ? 255 : 220, overClose ? 120 : 70, 40);
-    PageText((L.closeL + L.closeR) / 2.0, (L.closeT + L.closeB) / 2.0, "X", ts * 1.2);
+    GSprite("spr_menu_escape_button", HoverFrame(overClose, false), L.closeL, L.closeT, s);
 
-    // Slorm you have.
-    double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
-    FillRect(L.pillL, L.pillT, L.pillR, L.pillB, 8, 6, 6);
-    FrameRect(L.pillL, L.pillT, L.pillR, L.pillB, 2.0 * u, 44, 38, 36);
-    std::snprintf(text, sizeof(text), "%.0f", gold);
-    const double goldWidth = TextWidth(text, ts * 1.1);
-    const double goldX = L.cx - (goldWidth + 26.0 * u) / 2.0;
-    GmAlign(0, 1);
-    GmColor(255, 255, 255);
-    PageText(goldX, (L.pillT + L.pillB) / 2.0, text, ts * 1.1);
-    DrawSlormDrop(goldX + goldWidth + 16.0 * u, (L.pillT + L.pillB) / 2.0, 7.0 * u);
+    // Language: a selector like the game's, with an arrow on each side of the value.
+    GText(X(kPad), Y(kLangY + kRow / 2.0), Tr("Language", "Langue"));
+    {
+        const double top = Y(kLangY + (kRow - kArrowH) / 2.0);
+        const double rightArrow = X(R - kArrowW);
+        const double box = rightArrow - 4.0 * s - kBoxW * s;
+        const double leftArrow = box - 4.0 * s - kArrowW * s;
+        const bool over = Inside(M, L.langL, L.langT, L.langR, L.langB);
+        GRect(box, top, box + kBoxW * s, top + kArrowH * s, 0x020202);
+        GRect(box + 3 * s, top + 3 * s, box + kBoxW * s - 3 * s, top + kArrowH * s - 3 * s, 0x101010);
+        GText(box + kBoxW * s / 2.0, top + kArrowH * s / 2.0, g_French ? "Fran\xC3\xA7" "ais" : "English", "ft_standard_12", "grey", 1);
+        GSprite("spr_selector_btn_l_v2", HoverFrame(over, false), leftArrow, top, s);
+        GSprite("spr_selector_btn_r_v2", HoverFrame(over, false), rightArrow, top, s);
+    }
 
-    // Upgrade rows.
+    // Upgrade rows: the name, what it gives so far, and its level.
     for (int i = 0; i < kUpgradeCount; i++)
     {
         const UpgradeDef& up = kUpgrades[i];
@@ -1302,71 +1483,60 @@ static void DrawRoomPage(const MouseState& M, double W, double H)
         const bool selected = (i == g_SelectedUpgrade);
         const double my = (y1 + y2) / 2.0;
 
-        FillRect(x1, y1, x2, y2, 28, 22, 22, 0.92);
-        if (selected) FrameRect(x1, y1, x2, y2, 3.0 * u, 190, 150, 60);
-        else if (hover) FrameRect(x1, y1, x2, y2, 2.0 * u, 110, 86, 50);
-
-        // Icon: the game's "square within a square" glyph.
-        FrameRect(x1 + 18.0 * u, my - 14.0 * u, x1 + 46.0 * u, my + 14.0 * u, 3.0 * u, 190, 130, 50);
-        FillRect(x1 + 28.0 * u, my - 4.0 * u, x1 + 36.0 * u, my + 4.0 * u, 190, 130, 50);
+        if (selected)
+        {
+            FillRect(x1 - 6 * s, y1 + 2 * s, x2 + 6 * s, y2 - 2 * s, 24, 20, 14, 1.0);
+            FrameRect(x1 - 6 * s, y1 + 2 * s, x2 + 6 * s, y2 - 2 * s, 2 * s, 110, 86, 50);
+        }
+        else if (hover)
+            FrameRect(x1 - 6 * s, y1 + 2 * s, x2 + 6 * s, y2 - 2 * s, 1 * s, 70, 56, 36);
 
         const char* name = Tr(up.NameEn, up.NameFr);
-        GmAlign(0, 1);
-        GmColor(255, 255, 255);
-        PageText(x1 + 66.0 * u, my, name, ts * 1.0);
-
+        GText(x1, my, name, "ft_standard_12", selected ? "item_highlight" : "white");
         up.Value(text, sizeof(text));
-        GmColor(150, 150, 150);
-        PageText(x1 + 66.0 * u + TextWidth(name, ts * 1.0) + 14.0 * u, my, text, ts * 0.9);
+        GText(x1 + (GTextWidth(name, "ft_standard_12", s) + 10.0) * s, my, text, "ft_standard_11", "grey");
 
-        char max[24], lvl[24];
-        std::snprintf(max, sizeof(max), "/%d", up.MaxLevel());
-        std::snprintf(lvl, sizeof(lvl), "%d", up.Level());
-        const double maxW = TextWidth(max, ts * 1.0);
-        GmAlign(2, 1);
-        GmColor(255, 255, 255);
-        PageText(x2 - 20.0 * u, my, max, ts * 1.0);
-        GmColor(222, 158, 44);
-        PageText(x2 - 20.0 * u - maxW, my, lvl, ts * 1.0);
+        char level[40];
+        std::snprintf(level, sizeof(level), "%d / %d", up.Level(), up.MaxLevel());
+        GText(x2, my, level, "ft_standard_12", "item_highlight", 2);
     }
 
-    // Tooltip of the selected upgrade.
-    FillRect(L.tipL, L.tipT, L.tipR, L.tipB, 10, 7, 7, 0.9);
-    FrameRect(L.tipL, L.tipT, L.tipR, L.tipB, 2.0 * u, 44, 38, 36);
-    GmAlign(0, 0);
-    GmColor(235, 235, 235);
+    // The selected upgrade: what you have, what it does.
     const UpgradeDef& sel = kUpgrades[g_SelectedUpgrade];
-    g_Yytk->CallBuiltin("draw_text_ext_transformed", { RValue(L.tipL + 16.0 * u), RValue(L.tipT + 14.0 * u),
-        Tr(sel.TipEn, sel.TipFr), RValue(-1.0), RValue((L.tipR - L.tipL - 32.0 * u) / (ts * 0.95 * kPageTextScale)), RValue(ts * 0.95 * kPageTextScale), RValue(ts * 0.95 * kPageTextScale), RValue(0.0) });
+    double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
+    double y = kLangY + kRow * (1 + kUpgradeCount) + 14.0;
 
-    // Price, refunds and their buttons.
-    FillRect(L.panelL, L.panelT, L.panelR, L.panelB, 62, 22, 16);
-    FrameRect(L.panelL, L.panelT, L.panelR, L.panelB, 2.0 * u, 112, 42, 26);
+    GText(X(kPad), Y(y), Tr("Slorm owned", "Slorm poss\xC3\xA9" "d\xC3\xA9s"));
+    std::snprintf(text, sizeof(text), "%.0f", gold);
+    GText(X(R), Y(y), text, "ft_standard_12", "white", 2);
+    y += 24.0;
+
+    const double lineHeight = GTextHeight("ft_standard_11", s) + 2.0;
+    const std::vector<std::string> tip = WrapText(Tr(sel.TipEn, sel.TipFr), "ft_standard_11", R - kPad, s);
+    for (size_t i = 0; i < tip.size(); i++)
+        GText(X(kPad), Y(y + lineHeight * static_cast<double>(i)), tip[i].c_str(), "ft_standard_11", "grey");
+
+    // Price and refunds, over the three buttons.
     const bool maxed = sel.Level() >= sel.MaxLevel();
     const bool canBuy = CanBuyUpgrade(sel, gold);
     const double refundOne = sel.RefundOneValue();
     const double refundAll = sel.RefundAllValue();
-    const double boxTop = L.panelT + 10.0 * u;
+    const double captionY = kButtonsY - 14.0;
 
     if (maxed)
-    {
-        FillRect(L.buyL, boxTop, L.buyR, boxTop + 36.0 * u, 20, 8, 8);
-        GmAlign(1, 1);
-        GmColor(200, 200, 200);
-        PageText((L.buyL + L.buyR) / 2.0, boxTop + 18.0 * u, "-", ts * 1.0);
-    }
+        std::snprintf(text, sizeof(text), "-");
     else
-    {
-        const bool enough = gold >= sel.Price();
-        DrawAmountBox(u, L.buyL, L.buyR, boxTop, "", sel.Price(), enough ? 255 : 230, enough ? 255 : 80, enough ? 255 : 60);
-    }
-    DrawAmountBox(u, L.refL, L.refR, boxTop, "+", refundOne, 130, 220, 130);
-    DrawAmountBox(u, L.allL, L.allR, boxTop, "+", refundAll, 130, 220, 130);
+        std::snprintf(text, sizeof(text), "%.0f", sel.Price());
+    GText((L.buyL + L.buyR) / 2.0, Y(captionY), text, "ft_standard_12", (maxed || gold >= sel.Price()) ? "white" : "grey", 1);
+    std::snprintf(text, sizeof(text), "+%.0f", refundOne);
+    GText((L.refL + L.refR) / 2.0, Y(captionY), text, "ft_standard_12", "item_highlight", 1);
+    std::snprintf(text, sizeof(text), "+%.0f", refundAll);
+    GText((L.allL + L.allR) / 2.0, Y(captionY), text, "ft_standard_12", "item_highlight", 1);
 
-    DrawActionButton(M, u, L.buyL, L.buyT, L.buyR, L.buyB, maxed ? "MAX" : Tr("Buy", "Acheter"), canBuy);
-    DrawActionButton(M, u, L.refL, L.refT, L.refR, L.refB, Tr("Refund", "Rembourser"), refundOne > 0.0 || sel.Level() > 0);
+    GButton(M, L, L.buyL, L.buyT, L.buyR, L.buyB, maxed ? "MAX" : Tr("Buy", "Acheter"), canBuy);
+    GButton(M, L, L.refL, L.refT, L.refR, L.refB, Tr("Refund", "Rembourser"), refundOne > 0.0 || sel.Level() > 0);
     const bool armed = GetTickCount64() < g_RefundAllArmedUntil;
-    DrawActionButton(M, u, L.allL, L.allT, L.allR, L.allB, armed ? Tr("Confirm?", "Confirmer ?") : Tr("Refund all", "Tout rembourser"), sel.Level() > 0);
+    GButton(M, L, L.allL, L.allT, L.allR, L.allB, armed ? Tr("Confirm?", "Confirmer ?") : Tr("Refund all", "Tout rembourser"), refundAll > 0.0);
 
     GmColor(255, 255, 255);
     GmAlpha(1.0);
@@ -1391,43 +1561,64 @@ static void DrawPageIfOpen(int Tag)
     GmAlign(0, 0);
 }
 
+static void SlormiteGrey(double Brightness)
+{
+    RValue shader = GAsset("shd_bright_contrast");
+    g_Yytk->CallBuiltin("shader_set", { shader });
+    auto uniform = [&](const char* Name, double Value)
+    {
+        RValue handle = g_Yytk->CallBuiltin("shader_get_uniform", { shader, RValue(Name) });
+        g_Yytk->CallBuiltin("shader_set_uniform_f", { handle, RValue(Value) });
+    };
+    uniform("fade", 1.0);
+    uniform("brightness_amount", Brightness);
+    uniform("contrast_amount", 0.0);
+}
+
+static void SlormiteFog(bool On, int Color)
+{
+    g_Yytk->CallBuiltin("gpu_set_fog", { RValue(On), RValue(static_cast<double>(Color)), RValue(0.0), RValue(1.0) });
+}
+
+static void SlormiteDraw(double X, double Y, double Scale, int Color, double Alpha)
+{
+    g_Yytk->CallBuiltin("draw_sprite_ext", { GAsset("spr_inventory_items"), RValue(static_cast<double>(kSlormiteFrame)), RValue(X), RValue(Y),
+        RValue(Scale), RValue(Scale), RValue(0.0), RValue(static_cast<double>(Color)), RValue(Alpha) });
+}
+
+// The switch that opens the page: the Slormite icon, with a shadow; larger and brighter under the mouse,
+// pressed in while the page is open, and blue then.
 static void DrawMIcon(const MouseState& M, double W, double H)
 {
     double x1, y1, x2, y2;
     IconRect(W, H, x1, y1, x2, y2);
     const double cx = (x1 + x2) / 2.0, cy = (y1 + y2) / 2.0;
-    const double size = y2 - y1;
 
     double hx1, hy1, hx2, hy2;
     IconHitRect(W, H, hx1, hy1, hx2, hy2);
     const bool hover = Inside(M, hx1, hy1, hx2, hy2);
 
-    // The game's diamond (the one of its Options checkboxes) with an M inside, like the mods menu's button.
-    RValue sprite = g_Yytk->CallBuiltin("asset_get_index", { "spr_radio_btn_v3" });
-    const double index = ReadNumber(sprite);
-    const double w = index >= 0.0 ? ReadNumber(g_Yytk->CallBuiltin("sprite_get_width", { sprite })) : 0.0;
-    if (w > 0.0)
-    {
-        const double h = ReadNumber(g_Yytk->CallBuiltin("sprite_get_height", { sprite }));
-        const double xo = ReadNumber(g_Yytk->CallBuiltin("sprite_get_xoffset", { sprite }));
-        const double yo = ReadNumber(g_Yytk->CallBuiltin("sprite_get_yoffset", { sprite }));
-        const double scale = (size * 1.35) / w;
-        g_Yytk->CallBuiltin("draw_sprite_ext",
-            { sprite, RValue(hover ? 3.0 : 0.0), RValue(cx - w * 0.5 * scale + xo * scale), RValue(cy - h * 0.5 * scale + yo * scale),
-              RValue(scale), RValue(scale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
-    }
-    else
-    {
-        GmAlpha(1.0);
-        GmColor(hover ? 120 : 62, hover ? 45 : 22, hover ? 22 : 14);
-        GmRect(x1, y1, x2, y2);
-    }
+    const double scale = UiScale(H);
+    const double size = (x2 - x1) * (hover && !g_PageOpen ? 1.1 : 1.0);
+    const double depth = (g_PageOpen ? 2.0 : 5.0) * scale;
+    const double draw = size / 64.0;
+    const double x = cx - size / 2.0;
+    const double y = cy - size / 2.0 + (g_PageOpen ? 2.0 * scale : 0.0);
 
-    GmAlpha(1.0);
-    if (hover) GmColor(246, 206, 96); else GmColor(226, 112, 38);
-    GmAlign(1, 1);
-    GmText(cx, cy, "M", (H / 900.0) * 0.95);
-    GmAlign(0, 0);
+    SlormiteFog(true, 0);
+    SlormiteDraw(x + depth * 0.6, y + depth, draw, 16777215, 0.5);
+    SlormiteFog(false, 0);
+
+    SlormiteGrey(hover ? 0.15 : 0.0);
+    SlormiteDraw(x, y, draw, 16777215, 1.0);
+    g_Yytk->CallBuiltin("shader_reset", {});
+
+    if (g_PageOpen)
+    {
+        SlormiteFog(true, kOpenBlue);
+        SlormiteDraw(x, y, draw, 16777215, 0.55);
+        SlormiteFog(false, 0);
+    }
 }
 
 // Drawn inside the "Personnage" window's script, so the icon and the page are on top of the menu
@@ -1438,6 +1629,7 @@ static RValue& InventoryHook(IN CInstance* Self, IN CInstance* Other, OUT RValue
 
     if (g_PageOpen)
     {
+        g_DrawSelf = Self;
         DrawRoomPage(g_LastMouse, g_LastW, g_LastH);
 
         GmColor(255, 255, 255);
@@ -1464,6 +1656,19 @@ static void RunRoomUi()
         g_PageOpen = false;
         g_PageWasOpen = false;
         return;
+    }
+
+    // Slorm owed from the conversion of the old levels: given back once, now that the save is loaded.
+    {
+        const auto owed = g_SlotRefund.find(g_CurrentSlot);
+        if (owed != g_SlotRefund.end() && owed->second > 0.0)
+        {
+            const double gold = ReadNumber(g_Yytk->CallBuiltin("variable_global_get", { kCurrencyVar }));
+            g_Yytk->CallBuiltin("variable_global_set", { kCurrencyVar, RValue(gold + owed->second) });
+            DbgPrintEx(LOG_SEVERITY_INFO, "[TempleRush] old levels converted: %.0f Pure Slorm given back", owed->second);
+            owed->second = 0.0;
+            SaveRoomLevel();
+        }
     }
 
     if (g_ExtraRedraws > 0)
@@ -1545,7 +1750,7 @@ static void RunRoomUi()
     }
     else if (Inside(M, L.allL, L.allT, L.allR, L.allB))
     {
-        if (sel.Level() > 0)
+        if (sel.RefundAllValue() > 0.0)
         {
             if (now < g_RefundAllArmedUntil)
             {

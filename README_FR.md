@@ -24,29 +24,35 @@ Le bonus ne s'applique que la première fois que tu termines un étage (nouveau 
 
 ## Pièces par étage du Temple (amélioration du Slorm Juteux)
 
-Parle au Slorm Juteux : un losange marqué **M** apparaît en bas à droite de la fenêtre « Personnage ».
-Clique dessus pour ouvrir la page de TempleRush. Elle liste les améliorations du mod dans le style de la
-liste du jeu (d'autres pourront être ajoutées) ; clique sur une ligne pour la sélectionner, puis sur **Acheter**.
+Parle au Slorm Juteux : une étoile grise (l'icône de la Slormite, sur le carré noir en haut à gauche du portrait
+du PNJ) ouvre la page de TempleRush, dans le style du panneau de SlormReslormitizer (le cadre, le sélecteur,
+les boutons et les polices du jeu). Elle liste les améliorations du mod (d'autres pourront être ajoutées) ;
+clique sur une ligne pour la sélectionner, puis sur **Acheter**. La page a son propre sélecteur de langue
+(anglais / français).
 
 **Pièces par étage du Temple** retire des pièces à chaque étage du Temple du Slorm :
 
-- chaque niveau vaut 0,1 pièce, et seules les pièces entières comptent : une pièce est retirée tous les
-  10 niveaux, jusqu'à 5 pièces au niveau 50 (le maximum) ;
+- 10 rangs : chaque rang retire 1 pièce, donc le rang 10 (le maximum) retire 10 pièces ;
 - un étage garde toujours au moins 3 pièces ;
-- un niveau coûte 50 x son numéro, en Slorm purs.
+- chaque rang a son prix, en Slorm purs (210 297 au total) :
 
-| Niveau atteint | Pièces retirées | Coût cumulé (Slorm purs) |
-|---------------:|----------------:|-------------------------:|
-| 1 | 0 | 50 |
-| 10 | 1 | 2 750 |
-| 20 | 2 | 10 500 |
-| 30 | 3 | 23 250 |
-| 40 | 4 | 41 000 |
-| 50 | 5 | 63 750 |
+| Rang | Prix (Slorm purs) | Coût cumulé |
+|--:|--:|--:|
+| 1 | 921 | 921 |
+| 2 | 1 519 | 2 440 |
+| 3 | 2 506 | 4 946 |
+| 4 | 4 134 | 9 080 |
+| 5 | 6 820 | 15 900 |
+| 6 | 11 253 | 27 153 |
+| 7 | 18 566 | 45 719 |
+| 8 | 30 634 | 76 353 |
+| 9 | 50 545 | 126 898 |
+| 10 | 83 399 | 210 297 |
 
-**Remboursement.** La même page a deux boutons de plus : **Rembourser** rend le dernier niveau (ce qu'il a coûté) et
-**Tout rembourser** (deux clics pour confirmer) retire tous les niveaux et rend tous les Slorm purs dépensés.
-Repasser sous un multiple de 10 niveaux rend la pièce correspondante, à partir de l'étage suivant.
+**Remboursement.** La même page a deux boutons de plus : **Rembourser** rend le dernier rang (ce que tu l'as payé) et
+**Tout rembourser** (deux clics pour confirmer) retire tous les rangs et rend tous les Slorm purs dépensés.
+Le prix payé pour chaque rang est enregistré : un changement de prix dans une version future ne te fait rien perdre.
+Descendre d'un rang rend la pièce correspondante, à partir de l'étage suivant.
 
 **En entrant dans un étage**, un petit cadre sous le chronomètre indique pendant 8 secondes ce que l'amélioration a fait :
 « 4 pièces au lieu de 6 », « … (minimum atteint) » ou « aucune pièce retirée, l'étage est déjà au minimum ».
@@ -117,6 +123,12 @@ Visual Studio 2022 ou plus récent, avec « Développement Desktop en C++ ». Ou
 et compile en **Release / x64**. Les en-têtes Aurie et YYToolkit v5.0.0c sont dans `include/`.
 
 ## Historique des versions
+
+### 1.3.0
+- Nouvelle page pour l'amélioration, dans le style du panneau de SlormReslormitizer (un mod de wistb) : le cadre, le sélecteur, les boutons et les polices du jeu. Le bouton d'ouverture est maintenant son étoile Slormite, grise (bleue quand la page est ouverte), sur le portrait du PNJ, à la place du losange M.
+- « Pièces par étage du Temple » a maintenant 10 rangs d'une pièce chacun (jusqu'à -10 pièces) avec de nouveaux prix (210 297 Slorm purs au total), au lieu de 50 niveaux de 0,1 pièce.
+- Rien de ce que tu as investi n'est perdu : le prix payé pour chaque rang est enregistré et remboursé tel quel, et **Tout rembourser** marche même au rang 0. Les anciens niveaux sont convertis (les mêmes pièces entières restent retirées), et les niveaux qui ne forment pas un rang entier sont remboursés automatiquement, une fois.
+- La destination du portail après un record avec bonus était déjà corrigée en 1.2.4.
 
 ### 1.2.4
 - Portail corrigé : après un nouveau record avec un bonus de temps, il t'envoie à l'étage terminé + 1 + le bonus (il t'envoyait seulement à l'étage suivant, surtout sur le premier étage après le lancement du jeu).
